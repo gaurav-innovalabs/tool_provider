@@ -18,6 +18,7 @@ import { getApp } from "../core/registry";
 import { buildAuthorizeUrl } from "../lib/oauth";
 import { createConnectToken, resolveConnectToken, deleteConnectToken } from "../lib/redis";
 import { config } from "../config";
+import { PENDING_CONNECTION_TTL_MS } from "../core/connectionExpiry";
 import { errorPage, successPage, fieldFormPage as renderFieldFormPage } from "../lib/connectPage";
 import type { AppDefinition, Connection } from "../types";
 
@@ -68,6 +69,7 @@ export const connectionRoutes = {
             status: "pending",
             secrets: null,
             extra_metadata,
+            expires_at: new Date(Date.now() + PENDING_CONNECTION_TTL_MS).toISOString(),
             created_at: now,
             updated_at: now,
           });
@@ -90,6 +92,7 @@ export const connectionRoutes = {
             status: "active",
             secrets: null,
             extra_metadata,
+            expires_at: null,
             created_at: now,
             updated_at: now,
           });

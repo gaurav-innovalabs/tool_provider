@@ -16,13 +16,16 @@ export const connections = pgTable("connections", {
     .notNull()
     .references(() => users.user_id),
   app: text("app").notNull(), // AppId — free text, never a pg enum; restricted by src/types.ts + the registry, not the db schema.
-  status: text("status").notNull(), // ConnectionStatus: pending | active | revoked | error
+  status: text("status").notNull(), // ConnectionStatus: pending | active | revoked | error | expired
   // Encrypted (AES-256-GCM, src/lib/cipher.ts) opaque base64 blob — NEVER plaintext, NEVER jsonb (a jsonb
   // column would let `SELECT *` or a DB GUI show it decrypted-looking; text keeps it visibly opaque even
   // to someone browsing the table directly). null while status === "pending".
   secrets_encrypted: text("secrets_encrypted"),
   // Opaque, like user_metadata — never encrypted, never secret, see types.ts's Connection.extra_metadata.
   extra_metadata: jsonb("extra_metadata").notNull().default({}),
+  // Deadline for finishing the oauth2/api_key connect flow — only set while status === "pending".
+  // src/core/connectionExpiry.ts sweeps stale rows past this and flips them to "expired".
+  expires_at: timestamp("expires_at", { withTimezone: true, mode: "string" }),
   created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
 });

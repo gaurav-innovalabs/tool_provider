@@ -17,6 +17,9 @@
 
 import "./src/config"; // validate env first — same reason index.ts does this
 import { startScheduler } from "./src/core/scheduler";
+import { startConnectionExpirySweep } from "./src/core/connectionExpiry";
 
 startScheduler();
+startConnectionExpirySweep();
 console.log("trigger worker running — separate process from the API server, each trigger uses its own poll interval");
+console.log("connection expiry sweep running — stale pending connections flip to \"expired\" after their deadline");

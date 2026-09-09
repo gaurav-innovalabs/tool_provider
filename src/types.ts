@@ -16,7 +16,7 @@ export interface User {
   created_at: string;
 }
 
-export type ConnectionStatus = "pending" | "active" | "revoked" | "error";
+export type ConnectionStatus = "pending" | "active" | "revoked" | "error" | "expired";
 
 export interface Connection {
   connection_id: ConnectionId;
@@ -32,6 +32,10 @@ export interface Connection {
   // Opaque, like User.user_metadata — passed at POST /connections time (never secrets, never anything
   // needed to actually run an action), stored and returned as-is. Never redacted from responses, unlike secrets.
   extra_metadata: Record<string, unknown>;
+  // Only set while status === "pending" (oauth2/api_key connect flow) — the deadline for the end user to
+  // finish connecting. src/core/connectionExpiry.ts sweeps rows where this has passed and flips them to
+  // "expired". Unrelated to Secrets.expires_at (that's the OAuth token's own expiry, once active).
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }

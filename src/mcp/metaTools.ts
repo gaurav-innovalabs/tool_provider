@@ -7,6 +7,7 @@
 import { connectionStore, actionLogStore, triggerInstanceStore } from "../core/store";
 import { getApp, listApps } from "../core/registry";
 import { ensureFreshConnection } from "../core/tokenRefresh";
+import { PENDING_CONNECTION_TTL_MS } from "../core/connectionExpiry";
 import { createConnectToken } from "../lib/redis";
 import { config } from "../config";
 import type { Connection } from "../types";
@@ -92,13 +93,23 @@ async function getOrCreateActiveConnection(
   const now = new Date().toISOString();
 
   if (app.auth.type === "none") {
-    const connection: Connection = { connection_id, user_id: userId, app: appId, status: "active", secrets: null, extra_metadata: {}, created_at: now, updated_at: now };
+    const connection: Connection = { connection_id, user_id: userId, app: appId, status: "active", secrets: null, extra_metadata: {}, expires_at: null, created_at: now, updated_at: now };
     await connectionStore.create(connection);
     return { status: "active", connection };
   }
 
   // oauth2 / api_key / custom — same "pending row + connect token" shape as POST /connections.
-  await connectionStore.create({ connection_id, user_id: userId, app: appId, status: "pending", secrets: null, extra_metadata: {}, created_at: now, updated_at: now });
+  await connectionStore.create({
+    connection_id,
+    user_id: userId,
+    app: appId,
+    status: "pending",
+    secrets: null,
+    extra_metadata: {},
+    expires_at: new Date(Date.now() + PENDING_CONNECTION_TTL_MS).toISOString(),
+    created_at: now,
+    updated_at: now,
+  });
   const token = await createConnectToken(connection_id);
   return { status: "pending", connection_id, connect_url: `${config.BASE_URL}/connect/${token}` };
 }
@@ -131,7 +142,7 @@ export async function waitForConnection(userId: string, input: z.infer<typeof wa
     if (connection.status === "active") {
       return { status: "active", connection_id: input.connection_id };
     }
-    if (connection.status === "revoked" || connection.status === "error") {
+    if (connection.status === "revoked" || connection.status === "error" || connection.status === "expired") {
       return { status: "failed", connection_id: input.connection_id, current_status: connection.status };
     }
     if (Date.now() >= deadline) {

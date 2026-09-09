@@ -23,6 +23,7 @@ export function makeSlackConnection(secrets: Secrets = { access_token: "xoxb-tes
     status: "active",
     secrets,
     extra_metadata: {},
+    expires_at: null,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
   };

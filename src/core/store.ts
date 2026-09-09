@@ -7,7 +7,7 @@
 // decrypted `.secrets`. Internally the DB column is `secrets_encrypted` (text, opaque base64), never a
 // plaintext/jsonb column — see src/db/schema.ts's comment on why not jsonb specifically.
 
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, lt } from "drizzle-orm";
 import { orm } from "../lib/postgres";
 import { users as usersTable, connections as connectionsTable, triggerInstances as triggerInstancesTable, actionLogs as actionLogsTable, triggerLogs as triggerLogsTable } from "../db/schema";
 import { encrypt, decrypt } from "../lib/cipher";
@@ -21,6 +21,7 @@ function connectionRowToConnection(row: typeof connectionsTable.$inferSelect): C
     status: row.status as Connection["status"],
     secrets: row.secrets_encrypted ? (JSON.parse(decrypt(row.secrets_encrypted)) as Secrets) : null,
     extra_metadata: row.extra_metadata as Record<string, unknown>,
+    expires_at: row.expires_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -86,6 +87,18 @@ export const connectionStore = {
   async listAll(): Promise<Connection[]> {
     const rows = await orm.select().from(connectionsTable);
     return rows.map(connectionRowToConnection);
+  },
+  // Flips every "pending" connection whose expires_at deadline has passed to "expired" — one SQL
+  // statement, no per-row read/decide/write, so it's safe to call from a periodic sweep
+  // (src/core/connectionExpiry.ts) without racing a connect flow that finishes right at the deadline.
+  async expireStalePending(): Promise<ConnectionId[]> {
+    const now = new Date().toISOString();
+    const result = await orm
+      .update(connectionsTable)
+      .set({ status: "expired" satisfies Connection["status"], updated_at: now })
+      .where(and(eq(connectionsTable.status, "pending"), lt(connectionsTable.expires_at, now)))
+      .returning({ id: connectionsTable.connection_id });
+    return result.map((row) => row.id);
   },
 };
 
