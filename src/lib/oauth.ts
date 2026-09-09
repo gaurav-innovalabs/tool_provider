@@ -57,6 +57,14 @@ export async function exchangeCodeForToken(auth: OAuth2AuthConfig, app: string, 
     // src/api/webhook_routes.ts's /webhooks/slack/events handler. Absent from Google's response, so this
     // is undefined (and simply omitted from the returned Secrets) for Gmail connections.
     team?: { id: string };
+    // Slack-only, and only present when the authorize request included `user_scope` (see
+    // components/slack/app.ts's extraAuthorizeParams) — Slack's v2 OAuth response splits the grant into
+    // a bot token (`access_token`, above) AND a separate user token nested here. The two are NOT
+    // interchangeable: actions like search.messages only work with the user token, and "post as the
+    // authorizing user" (vs. as the bot) requires it too — see components/slack/actions/postMessage.ts's
+    // `as_user` handling. Absent entirely for Google (no such concept) and for a Slack app that requested
+    // no user_scope, so this is optional and simply omitted from Secrets in both cases.
+    authed_user?: { access_token?: string; scope?: string };
   };
 
   if (!res.ok || data.ok === false || !data.access_token) {
@@ -69,6 +77,8 @@ export async function exchangeCodeForToken(auth: OAuth2AuthConfig, app: string, 
     expires_at: data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : undefined,
     scope: data.scope,
     team_id: data.team?.id,
+    user_access_token: data.authed_user?.access_token,
+    user_scope: data.authed_user?.scope,
   };
 }
 

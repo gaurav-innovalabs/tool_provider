@@ -1,3 +1,6 @@
+// API reference: https://docs.slack.dev/reference/events/message (Events API `message` event) — the
+// SlackMessageEventPayload shape below is that doc's payload, trimmed to the fields we use.
+//
 // Real trigger — webhook mode, per the DECIDED note this file used to carry (verified unanimous across
 // Composio/Pipedream/n8n's real source/docs, not guessed). This file only parses ONE already-extracted
 // Slack event into our normalized shape; the harder parts — figuring out WHICH connection an inbound

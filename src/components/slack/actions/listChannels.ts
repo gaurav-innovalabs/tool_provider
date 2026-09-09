@@ -1,3 +1,7 @@
+// API reference: https://docs.slack.dev/reference/methods/conversations.list (bot scope: channels:read)
+// Response shape: { ok, channels: [{ id, name, is_member, ... }], response_metadata: { next_cursor } } —
+// we only surface id/name/is_member; pagination (next_cursor) isn't wired up, `limit` caps the one page.
+
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
 
