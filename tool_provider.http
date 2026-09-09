@@ -1,0 +1,332 @@
+### tool_provider.http — same format as your composio.http reference
+### (/home/gr/projects/old_repo/ai-agent-backend/.idea/composio.http), works in JetBrains' HTTP Client and
+### VS Code's REST Client. Comparison below is against Composio's REAL v3 API — fetched directly from
+### https://backend.composio.dev/api/v3/openapi.json (74 real endpoints, not inferred from docs prose),
+### not just the core/lib/composio wrapper. Full generated API docs for THIS server: GET {{base_url}}/docs
+### (Swagger UI, schemas generated live from the actual zod definitions in src/components/*/actions/*.ts —
+### can't drift out of sync with the code, see src/openapi.ts's header comment).
+
+@base_url = http://localhost:3005
+
+# ============================================================================
+# COMPARISON — what we have vs. Composio's real API surface (74 endpoints total)
+# ============================================================================
+#
+# ---- We implement (real, tested against live Google/Slack/SerpApi + real local Redis) ---------------
+# POST   /users                              (no Composio equivalent — see "EXTRA" below)
+# POST   /connections                        ~ POST /connected_accounts/link — NEVER carries secrets or a
+#                                              field schema, for ANY auth type. Response is always just
+#                                              {connection_id, status, connect_url?, app} — oauth2 AND
+#                                              api_key both return `connect_url` (identical shape); none ->
+#                                              active immediately, no connect_url.
+# GET/POST /connect/{token}                  ~ oauth2: /connected_accounts/link's redirect_url, but proxied
+#                                              through our own domain first. api_key: no Composio MCP-side
+#                                              equivalent — this is OUR OWN server-rendered field-collection
+#                                              page (plain HTML form, no JS). `token` is a random,
+#                                              single-use, Redis-backed value (src/lib/redis.ts) — the raw
+#                                              connection_id never appears in a URL handed to an end user.
+#                                              POST here (the form's own submit) runs a REAL
+#                                              testConnection() call (src/components/serpapi/app.ts) before
+#                                              activating — a bad value re-renders the same form with the
+#                                              real provider error, token stays valid to retry.
+# GET    /connections/{id}                   ~ GET  /connected_accounts/{nanoid}
+# POST   /actions/{app}/{action}             ~ POST /tools/execute/{tool_slug}
+# GET    /oauth/callback/{app}               (internal redirect target, not a public API either side)
+#
+# ---- Composio has, we DON'T (real gaps) ------------------------------------
+# Auth Configs (full CRUD)        POST/GET/PATCH/DELETE /auth_configs, PATCH .../{status}
+#   -> we hardcode the "auth config" in code (src/components/<app>/app.ts) — no API to create/inspect/
+#      disable one. Fine at 3 apps; would matter for Phase 5 (bring-your-own OAuth app per auth-patterns.md #3).
+# List/delete/disable a Connection   GET /connected_accounts (list ALL), DELETE, PATCH .../status
+#   -> we only have GET-by-id, no list-all, no revoke/disconnect, no enable/disable. Real gap: there is
+#      currently NO WAY to disconnect a connection short of touching the store directly.
+# Refresh a Connection            POST /connected_accounts/{nanoid}/refresh
+#   -> matches our own stub: src/lib/oauth.ts's refreshToken() throws "not implemented".
+# Toolkit/Tool introspection      GET /toolkits, /toolkits/{slug}, /toolkits/categories, /tools, /tools/{slug}, /tools/enum
+#   -> NOTHING. No way to ask this server "what apps/actions exist" over the API — you read
+#      src/components/*/app.ts source, or GET /openapi.json and parse it yourself.
+# Natural-language tool input     POST /tools/execute/{tool_slug}/input
+#   -> not applicable at our scale (this is Composio's "let an LLM turn free text into typed arguments"
+#      helper, useful across 1000s of tools; less valuable across 10).
+# Real Triggers (list/upsert/delete/enable)   POST .../upsert, DELETE/PATCH .../manage/{id}, GET /triggers_types
+#   -> our /triggers/{app}/{trigger}/subscribe exists but throws "not implemented" (Phase 3). Composio's
+#      full trigger lifecycle (types, active list, enable/disable) has no equivalent here at all yet.
+# Tool Router (session-based dynamic tool use)   POST /tool_router/session + 10 sub-routes
+#   -> philosophically different, not just missing: Composio's Tool Router lets an agent search/discover
+#      tools at runtime across thousands of toolkits. We don't have (and at ~10 actions, don't need) a
+#      discovery layer — every action is already known/declared, called directly by app+key.
+# Webhook Endpoints / Subscriptions (outbound delivery config)   full CRUD, both namespaces
+#   -> matches our own gap: research/triggers-patterns.md's "Phase 6, not decided yet" fan-in-vs-per-trigger
+#      question. No outbound webhook delivery of any kind exists here yet.
+# Proxy execute                   POST /tools/execute/proxy
+#   -> Composio can proxy an arbitrary authenticated HTTP call through a connected account without a
+#      pre-defined "tool" wrapping it. We have no equivalent — every call must go through a declared Action.
+#
+# ---- We have, Composio DOESN'T (extras) ------------------------------------
+# POST /users                     Composio has no user resource at all — you just pass any user_id string
+#                                  you choose directly into connected_accounts/link. We model User as a
+#                                  real record (src/types.ts) with opaque metadata attached.
+# GET/POST /connect/{token}       Composio's /connected_accounts/link returns the provider's redirect_url
+#                                  DIRECTLY to the caller (oauth2), or expects credentials already collected
+#                                  at auth-config-creation time (api_key). We interpose our own domain for
+#                                  BOTH (per your spec — "get_connect_url will be our server link"): one
+#                                  token-based URL that redirects (oauth2) or serves our own field-collection
+#                                  form (api_key) — same shape either way, zero client-side UI work.
+# GET /docs, GET /openapi.json    Composio's API doesn't serve its own docs — docs.composio.dev is a
+#                                  separate, hand-maintained site. Ours is generated from the running
+#                                  server's own code and served by the server itself.
+# /admin/* (users/triggers/logs)  Composio has no equivalent read-only inspection API — that's dashboard-
+#                                  UI-only on their side. Ours is API-first (still unimplemented, but the
+#                                  shape exists) since we have no dashboard.
+#
+# ============================================================================
+
+#### composio ->>> x-api-key: {{api_key}} on every request (a real platform API key)
+#### but we have: no auth enforced yet at all — AuthKey in .env.example is not wired into any route
+#### (see server.ts's TODO). Every request below is unauthenticated until that's built.
+
+### ----------------------------------------------------
+### 🔧 API docs (Swagger UI) — generated live from this server's own zod schemas
+### ----------------------------------------------------
+GET {{base_url}}/docs
+
+###
+GET {{base_url}}/openapi.json
+
+### ----------------------------------------------------
+### 🔧 Create a user
+### ----------------------------------------------------
+POST {{base_url}}/users
+Content-Type: application/json
+
+{
+  "metadata": { "note": "created from tool_provider.http" }
+}
+
+### Copy the returned user_id into this variable for the requests below
+@user_id = usr_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Connect an app — oauth2 (Gmail) or api_key (SerpApi): IDENTICAL shape either way
+#### composio ->>> two separate flows: oauth2 apps go through /auth_configs + /connected_accounts/link
+#### (returns redirect_url); api_key apps go through /auth_configs with authScheme:"API_KEY" (credentials
+#### passed at auth-config-creation time, not via a browser page).
+#### but we have: ONE flow, same response shape for both. POST /connections never carries secrets or a
+#### field schema — just {user_id, app, extra_metadata?} in, {connection_id, status, connect_url} out.
+#### `connect_url` is a random, single-use, Redis-backed token (src/lib/redis.ts) — never the raw
+#### connection_id. Open it in a browser: oauth2 apps redirect straight to Google/Slack's consent screen;
+#### api_key apps get OUR OWN server-rendered field-collection form (src/api/connection_routes.ts's
+#### fieldFormPage()) — no client-side UI work either way, the caller just gets a link to hand to the user.
+### ----------------------------------------------------
+POST {{base_url}}/connections
+Content-Type: application/json
+
+{
+  "user_id": "{{user_id}}",
+  "app": "gmail"
+}
+
+### Copy the returned connect_url and open it in a browser to finish OAuth
+@gmail_connection_id = conn_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Connect an app — oauth2 (Slack). Same shape as Gmail above.
+### ----------------------------------------------------
+POST {{base_url}}/connections
+Content-Type: application/json
+
+{
+  "user_id": "{{user_id}}",
+  "app": "slack"
+}
+
+@slack_connection_id = conn_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Connect an app — api_key (SerpApi). Same shape as Gmail/Slack — just a different page behind connect_url.
+### ----------------------------------------------------
+POST {{base_url}}/connections
+Content-Type: application/json
+
+{
+  "user_id": "{{user_id}}",
+  "app": "serpapi"
+}
+
+### Copy the returned connect_url and open it in a browser — it's our own field-collection form for SerpApi
+@serpapi_connection_id = conn_b20d6dda-6828-4919-8c25-72a758862965
+
+### ----------------------------------------------------
+### 🔧 Check a connection's status
+#### composio ->>> GET /connected_accounts/{id} — status: INITIATED/ACTIVE/FAILED/EXPIRED/INACTIVE +
+#### status_reason. GET /connected_accounts (no id) lists ALL connections with filters.
+#### but we have: GET /connections/{id} only — smaller state machine (pending/active/revoked/error, no
+#### distinct EXPIRED/auto-timeout — see research/execution-models.md's Composio comparison note), and
+#### there is NO list-all-connections endpoint at all (real gap, noted above). Secrets always redacted.
+### ----------------------------------------------------
+GET {{base_url}}/connections/{{gmail_connection_id}}
+
+### ----------------------------------------------------
+### 🔧 Check a connection's status
+#### composio ->>> GET /connected_accounts/{id} — status: INITIATED/ACTIVE/FAILED/EXPIRED/INACTIVE +
+#### status_reason. GET /connected_accounts (no id) lists ALL connections with filters.
+#### but we have: GET /connections/{id} only — smaller state machine (pending/active/revoked/error, no
+#### distinct EXPIRED/auto-timeout — see research/execution-models.md's Composio comparison note), and
+#### there is NO list-all-connections endpoint at all (real gap, noted above). Secrets always redacted.
+### ----------------------------------------------------
+GET {{base_url}}/connections/{{serpapi_connection_id}}
+
+### ----------------------------------------------------
+### 🔧 List available apps / their actions & triggers
+#### composio ->>> GET /toolkits, /toolkits/{slug}, /tools?toolkit_slug=..., /tools/enum
+#### but we have: NO equivalent route (real gap, noted above). Closest thing: GET /openapi.json, which
+#### DOES list every real action with its live schema (generated, not hand-written) — just not shaped
+#### as a "toolkit list", and nothing for triggers since none are implemented yet.
+### ----------------------------------------------------
+GET {{base_url}}/openapi.json
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: send_email
+#### composio ->>> POST /tools/execute/{TOOL_SLUG} { user_id, connected_account_id, arguments, version }
+#### — user_id AND connected_account_id both required, Composio composes them server-side.
+#### but we have: POST /actions/:app/:action { connection_id, input } — connection_id alone implies both
+#### the user and the app.
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/send_email
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": {
+    "to": "someone@example.com",
+    "subject": "Hello from tool_provider.http",
+    "body": "Testing the action pipeline."
+  }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: list_recent_emails
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/list_recent_emails
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "max_results": 5 }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: list_labels
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/list_labels
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": {}
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: create_label
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/create_label
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "name": "TestLabel" }
+}
+
+### Copy a label id here to test get/update/delete below
+@gmail_label_id = Label_12
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: get_label
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/get_label
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: update_label
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/update_label
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}", "name": "RenamedLabel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Gmail: delete_label
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/delete_label
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Slack: post_message
+### ----------------------------------------------------
+POST {{base_url}}/actions/slack/post_message
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "#general", "text": "Hello from tool_provider.http" }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — Slack: list_channels
+### ----------------------------------------------------
+POST {{base_url}}/actions/slack/list_channels
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "limit": 20 }
+}
+
+### ----------------------------------------------------
+### 🔧 Execute an action — SerpApi: search
+### ----------------------------------------------------
+POST {{base_url}}/actions/serpapi/search
+Content-Type: application/json
+
+{
+  "connection_id": "{{serpapi_connection_id}}",
+  "input": { "query": "site:github.com composio" }
+}
+
+### ----------------------------------------------------
+### 🔧 Triggers — NOT IMPLEMENTED (Phase 3)
+#### composio ->>> POST /trigger_instances/{slug}/upsert (subscribe), DELETE/PATCH
+#### /trigger_instances/manage/{id} (delete/enable/disable), GET /triggers_types (what's available),
+#### GET /trigger_instances/active (list active).
+#### but we have: the route exists, throws "not implemented". No trigger-type listing endpoint at all.
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}"
+}
+
+### ----------------------------------------------------
+### 🔧 Admin — read-only inspection, NOT IMPLEMENTED yet (no Composio equivalent, our own debug view)
+### ----------------------------------------------------
+GET {{base_url}}/admin/users
+
+###
+GET {{base_url}}/admin/triggers
+
+###
+GET {{base_url}}/admin/logs?limit=20

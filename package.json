@@ -1,12 +1,26 @@
 {
   "name": "tool_provider_project",
   "module": "index.ts",
-  "type": "module",
-  "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.10",
+    "postgres": "^3.4.9"
   },
   "peerDependencies": {
     "typescript": "^7"
+  },
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "type": "module",
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "swagger-ui-dist": "^5.32.15",
+    "zod": "^4.5.4"
   }
 }
