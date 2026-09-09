@@ -29,6 +29,10 @@ const envSchema = z.object({
 
   SLACK_CLIENT_ID: z.string().optional().default(""),
   SLACK_CLIENT_SECRET: z.string().optional().default(""),
+  // Separate from CLIENT_ID/SECRET — used only to verify inbound requests to POST /webhooks/slack/events
+  // actually came from Slack (src/lib/slackSignature.ts). Find it in the Slack app config under Basic
+  // Information -> App Credentials -> Signing Secret (not the OAuth Client Secret).
+  SLACK_SIGNING_SECRET: z.string().optional().default(""),
 
   GMAIL_CLIENT_ID: z.string().optional().default(""),
   GMAIL_CLIENT_SECRET: z.string().optional().default(""),
@@ -76,6 +80,7 @@ export const config = {
     slack: {
       SLACK_CLIENT_ID: env.SLACK_CLIENT_ID,
       SLACK_CLIENT_SECRET: env.SLACK_CLIENT_SECRET,
+      SLACK_SIGNING_SECRET: env.SLACK_SIGNING_SECRET,
     },
     gmail: {
       GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID,

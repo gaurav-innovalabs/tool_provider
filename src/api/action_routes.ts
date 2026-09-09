@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { connectionStore, actionLogStore } from "../core/store";
 import { getApp } from "../core/registry";
+import { ensureFreshConnection } from "../core/tokenRefresh";
 
 const requestBody = z.object({
   connection_id: z.string(),
@@ -39,9 +40,13 @@ export const actionRoutes = {
         }
         userId = connection.user_id;
 
+        // Refresh-ahead-of-expiry (src/core/tokenRefresh.ts) — a no-op for api_key connections or any
+        // oauth2 token not close to expiry; returns the connection as-is in either case.
+        const freshConnection = await ensureFreshConnection(app, connection);
+
         // 400 on bad input — this is the "input props" contract actually being enforced, not just documented.
         const parsedInput = action.input.parse(body.input);
-        const result = await action.run(connection, parsedInput);
+        const result = await action.run(freshConnection, parsedInput);
         // Validates our own action's return value against its declared `output` schema — catches an
         // action lying about its own contract, not just bad caller input.
         const parsedOutput = action.output.parse(result);

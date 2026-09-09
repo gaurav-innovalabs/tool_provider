@@ -1,5 +1,5 @@
 {
-  "id": "d1d800fa-dd67-4c9e-8e98-44d23b779214",
+  "id": "9a8f0e73-d82c-4e0e-8e60-6551e93cdcbd",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -114,11 +114,18 @@
           "primaryKey": false,
           "notNull": true
         },
-        "credential": {
-          "name": "credential",
-          "type": "jsonb",
+        "secrets_encrypted": {
+          "name": "secrets_encrypted",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "extra_metadata": {
+          "name": "extra_metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -197,6 +204,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "webhook_url": {
+          "name": "webhook_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "poll_interval_ms": {
+          "name": "poll_interval_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "cursor": {
           "name": "cursor",
           "type": "jsonb",
@@ -223,6 +242,101 @@
         "trigger_instances_connection_id_connections_connection_id_fk": {
           "name": "trigger_instances_connection_id_connections_connection_id_fk",
           "tableFrom": "trigger_instances",
+          "tableTo": "connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "connection_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trigger_logs": {
+      "name": "trigger_logs",
+      "schema": "",
+      "columns": {
+        "log_id": {
+          "name": "log_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "trigger_instance_id": {
+          "name": "trigger_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "app": {
+          "name": "app",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "trigger_key": {
+          "name": "trigger_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ran_at": {
+          "name": "ran_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "trigger_logs_trigger_instance_id_trigger_instances_trigger_instance_id_fk": {
+          "name": "trigger_logs_trigger_instance_id_trigger_instances_trigger_instance_id_fk",
+          "tableFrom": "trigger_logs",
+          "tableTo": "trigger_instances",
+          "columnsFrom": [
+            "trigger_instance_id"
+          ],
+          "columnsTo": [
+            "trigger_instance_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "trigger_logs_connection_id_connections_connection_id_fk": {
+          "name": "trigger_logs_connection_id_connections_connection_id_fk",
+          "tableFrom": "trigger_logs",
           "tableTo": "connections",
           "columnsFrom": [
             "connection_id"

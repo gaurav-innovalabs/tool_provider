@@ -1,37 +1,70 @@
 // Read-only, internal-only. "Nothing else" scoping per spec: /admin/users returns connection_id/app/status
-// only, no credentials, no user_metadata dump. No separate core/admin.ts wrapper (removed: pure pass-through
+// only, no secrets, no user_metadata dump. No separate core/admin.ts wrapper (removed: pure pass-through
 // over the stores, route is the only caller).
 
-import { userStore, connectionStore, triggerInstanceStore, actionLogStore } from "../core/store";
+import { userStore, connectionStore, triggerInstanceStore, actionLogStore, triggerLogStore } from "../core/store";
 
 // TODO(ask): confirm gating — same AuthKey as the rest, or a stricter/separate admin key since this
 // is meant for us to inspect the system, not for a client integration to call at all?
 
 export const adminRoutes = {
   "/admin/users": {
-    GET: async (req: Request) => {
-      // TODO:
-      // 1. users = userStore.listAll()
-      // 2. for each, connections = connectionStore.listByUser(user.user_id)
-      // 3. map to [{ user_id, connections: [{ connection_id, app, status }] }], return as JSON.
-      // No pagination in Phase 1 (fine at low user counts) — TODO(ask) revisit if this becomes a real ops
-      // tool vs. a dev-time debug endpoint.
-      throw new Error("not implemented");
+    GET: async () => {
+      const users = await userStore.listAll();
+      const rows = await Promise.all(
+        users.map(async (user) => {
+          const connections = await connectionStore.listByUser(user.user_id);
+          return {
+            user_id: user.user_id,
+            connections: connections.map((c) => ({ connection_id: c.connection_id, app: c.app, status: c.status })),
+          };
+        }),
+      );
+      // TODO(ask): N+1 pattern (listAll users, then per-user connection lookup) — fine at Phase 1 in-memory
+      // scale, worth a single join-style query once Phase 4 moves to Postgres.
+      return Response.json(rows);
     },
   },
   "/admin/triggers": {
-    GET: async (req: Request) => {
-      // TODO: triggerInstanceStore.listActive(), map to [{ trigger_instance_id, user_id, app, trigger_key,
-      // status }], return as JSON. Will be an empty array until Phase 3 lands.
-      throw new Error("not implemented");
+    GET: async () => {
+      const instances = await triggerInstanceStore.listActive();
+      return Response.json(
+        instances.map((t) => ({
+          trigger_instance_id: t.trigger_instance_id,
+          user_id: t.user_id,
+          app: t.app,
+          trigger_key: t.trigger_key,
+          status: t.status,
+        })),
+      );
     },
   },
   "/admin/logs": {
     GET: async (req: Request) => {
-      // TODO: parse ?limit= (default 50), call actionLogStore.listRecent(limit), map to [{ app, action_key,
-      // user_id, status, called_at }], return JSON. Will be an empty array until Phase 2 wires
-      // actionLogStore.append() into the action dispatcher.
-      throw new Error("not implemented");
+      const url = new URL(req.url);
+      const limit = Number(url.searchParams.get("limit") ?? "50");
+      const logs = await actionLogStore.listRecent(limit);
+      return Response.json(
+        logs.map((l) => ({ app: l.app, action_key: l.action_key, user_id: l.user_id, status: l.status, called_at: l.called_at })),
+      );
+    },
+  },
+  "/admin/trigger_logs": {
+    GET: async (req: Request) => {
+      const url = new URL(req.url);
+      const limit = Number(url.searchParams.get("limit") ?? "50");
+      const logs = await triggerLogStore.listRecent(limit);
+      return Response.json(
+        logs.map((l) => ({
+          trigger_instance_id: l.trigger_instance_id,
+          app: l.app,
+          trigger_key: l.trigger_key,
+          user_id: l.user_id,
+          status: l.status,
+          ran_at: l.ran_at,
+          error: l.error,
+        })),
+      );
     },
   },
 };

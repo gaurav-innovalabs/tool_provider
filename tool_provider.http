@@ -5,6 +5,11 @@
 ### not just the core/lib/composio wrapper. Full generated API docs for THIS server: GET {{base_url}}/docs
 ### (Swagger UI, schemas generated live from the actual zod definitions in src/components/*/actions/*.ts —
 ### can't drift out of sync with the code, see src/openapi.ts's header comment).
+###
+### For Gmail triggers to actually fire, `bun run worker` (worker.ts) must be running alongside `bun run
+### dev` (the API server, this base_url) — Gmail polling happens in a separate process, see PHASES.md
+### Phase 3. Slack's new_message trigger needs no worker — it's delivered by the API server itself via
+### POST {{base_url}}/webhooks/slack/events, registered as the Request URL in Slack's own app config.
 
 @base_url = http://localhost:3005
 
@@ -32,6 +37,11 @@
 # GET    /connections/{id}                   ~ GET  /connected_accounts/{nanoid}
 # POST   /actions/{app}/{action}             ~ POST /tools/execute/{tool_slug}
 # GET    /oauth/callback/{app}               (internal redirect target, not a public API either side)
+# GET    /triggers                           ~ GET  /triggers_types — no auth required here, unlike Composio
+# POST   /triggers/{app}/{trigger}/subscribe ~ POST /trigger_instances/{slug}/upsert — but ALSO takes
+#                                              webhook_url in the same call (see "Real gaps" below for the
+#                                              webhook_subscriptions split Composio does instead)
+# DELETE /triggers/{id}                      ~ DELETE /trigger_instances/manage/{triggerId}
 #
 # ---- Composio has, we DON'T (real gaps) ------------------------------------
 # Auth Configs (full CRUD)        POST/GET/PATCH/DELETE /auth_configs, PATCH .../{status}
@@ -48,9 +58,10 @@
 # Natural-language tool input     POST /tools/execute/{tool_slug}/input
 #   -> not applicable at our scale (this is Composio's "let an LLM turn free text into typed arguments"
 #      helper, useful across 1000s of tools; less valuable across 10).
-# Real Triggers (list/upsert/delete/enable)   POST .../upsert, DELETE/PATCH .../manage/{id}, GET /triggers_types
-#   -> our /triggers/{app}/{trigger}/subscribe exists but throws "not implemented" (Phase 3). Composio's
-#      full trigger lifecycle (types, active list, enable/disable) has no equivalent here at all yet.
+# Trigger enable/disable (pause without deleting)   PATCH /trigger_instances/manage/{id}
+#   -> we have create (subscribe) + delete (unsubscribe), real and working (Gmail new_email,
+#      new_labeled_email; Slack new_message still a stub). No pause/resume — delete and re-subscribe is
+#      the only option today.
 # Tool Router (session-based dynamic tool use)   POST /tool_router/session + 10 sub-routes
 #   -> philosophically different, not just missing: Composio's Tool Router lets an agent search/discover
 #      tools at runtime across thousands of toolkits. We don't have (and at ~10 actions, don't need) a
@@ -307,21 +318,76 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Triggers — NOT IMPLEMENTED (Phase 3)
-#### composio ->>> POST /trigger_instances/{slug}/upsert (subscribe), DELETE/PATCH
-#### /trigger_instances/manage/{id} (delete/enable/disable), GET /triggers_types (what's available),
-#### GET /trigger_instances/active (list active).
-#### but we have: the route exists, throws "not implemented". No trigger-type listing endpoint at all.
+### 🔧 Triggers — list available (Gmail new_email, Gmail new_labeled_email, Slack new_message)
+#### composio ->>> GET /triggers_types (per-toolkit, requires x-api-key even for schema-only info).
+#### but we have: GET /triggers, derived live from the registry (same "generated, not hand-maintained"
+#### idea as /openapi.json's action schemas) — no auth required to see what's available. Each entry
+#### includes default_poll_interval_ms — NOT a global setting, see next block.
+### ----------------------------------------------------
+GET {{base_url}}/triggers
+
+### ----------------------------------------------------
+### 🔧 Triggers — subscribe (Gmail new_email)
+#### composio ->>> POST /trigger_instances/{slug}/upsert { connected_account_id | user_id, trigger_config:
+#### {interval, ...} } — per-trigger interval, NOT global (their real docs, 15-min minimum as of their
+#### 2026-03-11 changelog). Event DELIVERY is a separate step: POST /webhook_subscriptions { webhook_url,
+#### enabled_events[] }, one URL for the whole project, decoupled from individual trigger creation.
+#### but we have: ONE call does both — POST /triggers/:app/:trigger/subscribe { connection_id, webhook_url,
+#### poll_interval_ms? }. No global interval either (verified against Pipedream's real published
+#### @pipedream/platform package: DEFAULT_POLLING_SOURCE_TIMER_INTERVAL is a PER-SOURCE prop default, not
+#### global) — each trigger declares its own default (src/types.ts's TriggerDefinition.defaultPollIntervalMs),
+#### overridable per-subscription via poll_interval_ms below. webhook_url is attached per-subscription
+#### rather than as a separate project-wide resource (deliberate simplification, see
+#### research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section).
+#### src/core/scheduler.ts POSTs new events to webhook_url with a Composio-style envelope: {id, type,
+#### metadata: {trigger_slug, trigger_instance_id, connection_id, user_id, app}, data, timestamp}.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_email/subscribe
 Content-Type: application/json
 
 {
-  "connection_id": "{{gmail_connection_id}}"
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+### Copy the returned trigger_instance_id here to unsubscribe below
+@gmail_new_email_trigger_id = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Triggers — subscribe (Gmail new_labeled_email — fires when a label is applied to a message)
+#### Real trigger, verified directly against Pipedream's actual source
+#### (components/gmail/sources/new-labeled-email/). A fabricated "new_label" (label CREATION) trigger was
+#### built first and removed — Gmail has no event feed for label creation at all, confirmed by
+#### exhaustively listing all 5 of Pipedream's real Gmail sources (none of them is that either).
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_labeled_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
 }
 
 ### ----------------------------------------------------
-### 🔧 Admin — read-only inspection, NOT IMPLEMENTED yet (no Composio equivalent, our own debug view)
+### 🔧 Execute an action — Gmail: create_draft
+#### Real action, verified against Pipedream's actual (and only) Gmail draft action — gmail-create-draft.
+### ----------------------------------------------------
+POST {{base_url}}/actions/gmail/create_draft
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "to": "someone@example.com", "subject": "Draft from tool_provider.http", "body": "Not sent yet." }
+}
+
+### ----------------------------------------------------
+### 🔧 Triggers — unsubscribe
+#### composio ->>> DELETE /trigger_instances/manage/{triggerId}
+### ----------------------------------------------------
+DELETE {{base_url}}/triggers/{{gmail_new_email_trigger_id}}
+
+### ----------------------------------------------------
+### 🔧 Admin — read-only inspection (no Composio equivalent, our own debug view)
 ### ----------------------------------------------------
 GET {{base_url}}/admin/users
 

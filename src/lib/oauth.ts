@@ -52,6 +52,11 @@ export async function exchangeCodeForToken(auth: OAuth2AuthConfig, app: string, 
     // this check is a no-op there — safe to apply generically rather than branching per-provider.
     ok?: boolean;
     error?: string;
+    // Also Slack-specific — which workspace this token belongs to. Captured so an inbound Slack Events
+    // API POST (which carries team_id, not a connection_id) can be routed to the right Connection — see
+    // src/api/webhook_routes.ts's /webhooks/slack/events handler. Absent from Google's response, so this
+    // is undefined (and simply omitted from the returned Secrets) for Gmail connections.
+    team?: { id: string };
   };
 
   if (!res.ok || data.ok === false || !data.access_token) {
@@ -63,11 +68,48 @@ export async function exchangeCodeForToken(auth: OAuth2AuthConfig, app: string, 
     refresh_token: data.refresh_token,
     expires_at: data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : undefined,
     scope: data.scope,
+    team_id: data.team?.id,
   };
 }
 
-export async function refreshToken(_auth: OAuth2AuthConfig, _secrets: Secrets): Promise<Secrets> {
-  // Phase 1: not called anywhere yet (no scheduler). Phase 4 wires this to the proactive
-  // refresh-ahead-of-expiry pattern from research/auth-patterns.md #4 (Nango's refresh_exhausted state machine).
-  throw new Error("not implemented");
+// Standard OAuth2 refresh_token grant — works unmodified for Google (always returns one on refresh) and
+// Slack (only relevant if the Slack app has token rotation enabled; a non-rotating Slack app never sets
+// `expires_at` in the first place, so src/core/tokenRefresh.ts's caller never calls this for it — see that
+// file's header for why this function itself doesn't need to know which app it's refreshing).
+export async function refreshToken(auth: OAuth2AuthConfig, secrets: Secrets): Promise<Secrets> {
+  if (!secrets.refresh_token) {
+    throw new Error("No refresh_token on this connection — the user needs to reconnect.");
+  }
+
+  const res = await fetch(auth.token_url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: auth.client_id,
+      client_secret: auth.client_secret,
+      refresh_token: secrets.refresh_token,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  const data = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string; // Slack's rotation flow returns a new one each time (single-use); Google omits this on refresh
+    expires_in?: number;
+    scope?: string;
+    ok?: boolean; // Slack-only, same 200-with-ok-false quirk as exchangeCodeForToken above
+    error?: string;
+  };
+
+  if (!res.ok || data.ok === false || !data.access_token) {
+    throw new Error(`OAuth token refresh failed (${res.status}): ${data.error ?? JSON.stringify(data)}`);
+  }
+
+  return {
+    ...secrets,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token ?? secrets.refresh_token,
+    expires_at: data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : secrets.expires_at,
+    scope: data.scope ?? secrets.scope,
+  };
 }

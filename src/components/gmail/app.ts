@@ -10,7 +10,9 @@ import { getLabel } from "./actions/getLabel";
 import { createLabel } from "./actions/createLabel";
 import { updateLabel } from "./actions/updateLabel";
 import { deleteLabel } from "./actions/deleteLabel";
+import { createDraft } from "./actions/createDraft";
 import { newEmail } from "./triggers/newEmail";
+import { newLabeledEmail } from "./triggers/newLabeledEmail";
 
 export const gmailApp: AppDefinition = {
   id: "gmail",
@@ -20,12 +22,14 @@ export const gmailApp: AppDefinition = {
     authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
     token_url: "https://oauth2.googleapis.com/token",
     // TODO(ask): exact scope set — gmail-deep-dive.md notes gmail.readonly/gmail.modify/gmail.send/gmail.compose
-    // depending on which actions ship. gmail.labels covers the label CRUD actions below (list/get needs
+    // depending on which actions ship. gmail.labels covers the label CRUD actions (list/get needs
     // readonly, but create/update/delete need the dedicated labels scope, not gmail.modify).
+    // gmail.compose covers create_draft (drafts.create requires it, gmail.send alone isn't enough).
     scopes: [
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.send",
       "https://www.googleapis.com/auth/gmail.labels",
+      "https://www.googleapis.com/auth/gmail.compose",
     ],
     client_id: config.apps.gmail.GMAIL_CLIENT_ID,
     client_secret: config.apps.gmail.GMAIL_CLIENT_SECRET,
@@ -34,6 +38,9 @@ export const gmailApp: AppDefinition = {
     // all; prompt=consent forces the consent screen (and a fresh refresh_token) every time.
     extraAuthorizeParams: { access_type: "offline", prompt: "consent" },
   },
-  actions: [sendEmail, listRecentEmails, listLabels, getLabel, createLabel, updateLabel, deleteLabel],
-  triggers: [newEmail],
+  actions: [sendEmail, listRecentEmails, listLabels, getLabel, createLabel, updateLabel, deleteLabel, createDraft],
+  // new_label (label creation) was removed — no real event exists for it anywhere, confirmed by
+  // exhaustively checking Pipedream's actual 5 Gmail sources during R&D. new_labeled_email (a label being
+  // applied to a message) replaces it — that one's real, verified against Pipedream's actual source.
+  triggers: [newEmail, newLabeledEmail],
 };

@@ -5,7 +5,7 @@ import type { z } from "zod";
 
 export type AppId = string; // e.g. "gmail", "slack"
 
-// TODO(ask): connection_id / user_id format — uuid v4? nanoid? prefixed like Composio's "ti_..."/Stripe-style ("conn_...", "usr_...")?
+// uuid v4 (crypto.randomUUID()), prefixed per entity — Composio/Stripe-style: "conn_...", "usr_...", "ti_...".
 export type UserId = string;
 export type ConnectionId = string;
 
@@ -111,6 +111,15 @@ export interface TriggerDefinition<Cursor = unknown, Event = unknown> {
   key: string; // e.g. "new_email"
   description: string;
   mode: TriggerMode;
+  // Only relevant when mode === "poll" — the trigger's OWN natural cadence, not a single global setting
+  // applied to everything. Per Pipedream's actual `timer: { type: "$.interface.timer", default: {
+  // intervalSeconds: DEFAULT_POLLING_SOURCE_TIMER_INTERVAL } }` prop pattern (verified from their real
+  // published npm package, @pipedream/platform's constants.ts: `DEFAULT_POLLING_SOURCE_TIMER_INTERVAL =
+  // 60 * 15` — 15 minutes) and Composio's per-trigger `trigger_config.interval` (their docs: a 15-minute
+  // *minimum* as of their 2026-03-11 changelog). Two real platforms independently landing on 15 minutes is
+  // a strong signal — that's this project's default too (see each trigger's own file), overridable per
+  // TriggerInstance at subscribe time (src/api/trigger_routes.ts), same as both platforms allow.
+  defaultPollIntervalMs?: number;
   // Only relevant when mode === "poll". Returns new events + the next cursor to persist.
   poll?: (connection: Connection, cursor: Cursor | null) => Promise<{ events: Event[]; nextCursor: Cursor }>;
   // Only relevant when mode === "webhook". Parses a raw inbound payload into normalized events.
@@ -147,9 +156,20 @@ export interface TriggerInstance {
   app: AppId;
   trigger_key: string;
   status: TriggerInstanceStatus;
-  // TODO(ask): expose the raw cursor in /admin/triggers (useful for debugging "why hasn't this fired")
-  // or keep it internal-only since it's per-app-shaped (GmailHistoryCursor vs SlackPollCursor) and admin
-  // is meant to be a generic view across apps?
+  // Where the scheduler POSTs events when this trigger fires — "we will call the user webhook_url when
+  // we receive any trigger", same fan-in-per-subscription idea as Composio's set_webhook_subscription,
+  // just attached directly to the trigger instance rather than as a separate project-wide resource (see
+  // research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section for why that's a
+  // deliberate simplification, not an oversight, at our current scale).
+  webhook_url: string;
+  // Resolved once at subscribe time — the trigger's own defaultPollIntervalMs, or an explicit override
+  // from the subscribe request (src/api/trigger_routes.ts). Only meaningful for mode: "poll" triggers;
+  // webhook-mode triggers (Slack) never poll at all, so this is unused for them. src/core/scheduler.ts
+  // uses this per-instance, not one interval applied to every trigger — see TriggerDefinition's comment.
+  poll_interval_ms: number | null;
+  // Per-app-shaped (GmailHistoryCursor vs a label-id set vs SlackPollCursor) — opaque here on purpose,
+  // src/core/scheduler.ts passes it straight through to the trigger's own poll() untouched.
+  cursor: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -168,5 +188,24 @@ export interface ActionLogEntry {
   // TODO(ask): store the actual error message/stack for admin debugging, or just the status per your
   // "nothing else" scoping for /admin/users — same question applies here: how much detail is "admin", not
   // "full observability tool"?
+  error?: string;
+}
+
+export type TriggerLogStatus = "success" | "error";
+
+// One row per trigger RUN — a poll attempt (whether or not it produced events) or a single webhook
+// delivery attempt (src/core/scheduler.ts's deliverEvent, called by both the poll cycle and Slack's
+// webhook route). Deliberately no retry: per spec ("no need to retry at all, just failed ok") a failed
+// delivery/poll is recorded here as status "error" and left alone — this table is the audit trail, not a
+// retry queue.
+export interface TriggerLogEntry {
+  log_id: string;
+  trigger_instance_id: string;
+  connection_id: ConnectionId;
+  user_id: UserId;
+  app: AppId;
+  trigger_key: string;
+  status: TriggerLogStatus;
+  ran_at: string;
   error?: string;
 }
