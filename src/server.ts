@@ -9,6 +9,7 @@ import { actionRoutes } from "./api/action_routes";
 import { triggerRoutes } from "./api/trigger_routes";
 import { webhookRoutes } from "./api/webhook_routes";
 import { docsRoutes } from "./api/docs_routes";
+import { mcpRoutes } from "./api/mcp_routes";
 import { config } from "./config";
 
 // TODO(ask): the .env.example has an `AuthKey` meant to restrict this server to internal callers only
@@ -27,6 +28,7 @@ export function createServer() {
       ...triggerRoutes,
       ...webhookRoutes,
       ...docsRoutes,
+      ...mcpRoutes,
     },
     development: {
       hmr: true,
