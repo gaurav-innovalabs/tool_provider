@@ -147,12 +147,12 @@ export const openApiSpec = {
   servers: [{ url: "/", description: "This server" }],
   security: [{ bearerAuth: [] }],
   tags: [
-    { name: "users", description: "Client-facing user lifecycle." },
-    { name: "connections", description: "Client-facing connection lifecycle — request, check status, and (oauth2 only) the browser-facing authorize redirect." },
-    { name: "actions", description: "Discover and invoke tools (App Actions) by tool_slug — Composio-shaped: GET /actions (list/search), GET /actions/{tool_slug} (schema), POST /actions/execute/{tool_slug} (run). One generic path per verb, not one path per action." },
-    { name: "triggers", description: "Discover trigger types, subscribe/unsubscribe, and list/edit a user's own trigger instances." },
-    { name: "webhooks", description: "Inbound calls from external providers (OAuth redirect). Not gated by our bearer token — see src/api/webhook_routes.ts." },
-    { name: "admin", description: "Internal, read-only inspection API. No UI — API only, per spec. Not implemented yet — routes exist and return 'not implemented'." },
+    { name: "users", description: "[Internal — requires ACCESS_TOKEN] Client-facing user lifecycle." },
+    { name: "connections", description: "[Internal — requires ACCESS_TOKEN] Client-facing connection lifecycle — request, check status, and (oauth2 only) the browser-facing authorize redirect." },
+    { name: "actions", description: "[Internal — requires ACCESS_TOKEN] Discover and invoke tools (App Actions) by tool_slug — Composio-shaped: GET /actions (list/search), GET /actions/{tool_slug} (schema), POST /actions/execute/{tool_slug} (run). One generic path per verb, not one path per action." },
+    { name: "triggers", description: "[Internal — requires ACCESS_TOKEN] Discover trigger types, subscribe/unsubscribe, and list/edit a user's own trigger instances." },
+    { name: "webhooks", description: "[External — NOT gated by our bearer token] Inbound calls FROM external providers: OAuth redirects (browser) and provider-pushed events (server-to-server, e.g. Slack Events API). Each provider verifies itself instead (OAuth state token, Slack signing secret) — see src/api/webhook_routes.ts." },
+    { name: "admin", description: "[Internal — requires ADMIN_ACCESS_TOKEN] Read-only inspection API. No UI — API only, per spec. Not implemented yet — routes exist and return 'not implemented'." },
   ],
   paths: {
     "/users": {
@@ -505,6 +505,30 @@ export const openApiSpec = {
         ],
         responses: {
           "200": { description: "Plain HTML success/failure page (see src/api/webhook_routes.ts's resultPage())." },
+        },
+      },
+    },
+    "/webhooks/{app}/events": {
+      post: {
+        tags: ["webhooks"],
+        summary: "Provider event push (Events API)",
+        description:
+          "One subscription URL per app — not per connection or per TriggerInstance. Register this exact URL as the Request URL in the provider's app config (for Slack: Event Subscriptions). Public, NOT gated by our bearer token — each provider verifies itself instead (Slack: x-slack-signature/x-slack-request-timestamp headers over the raw body, checked against SLACK_SIGNING_SECRET). Only `slack` is implemented today; other app slugs get 404. Gmail has no webhook receiver — its `new_email` family of triggers is poll-based only (src/core/scheduler.ts), not push.",
+        security: [],
+        parameters: [{ name: "app", in: "path", required: true, schema: { type: "string", enum: ["slack"] } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", description: "Provider-specific event envelope — for Slack, the Events API payload (url_verification handshake or event_callback)." },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "Slack url_verification handshake echoes `{ challenge }`; anything else acked with plain text \"ok\" (Slack retries on non-2xx)." },
+          "401": { description: "Invalid provider signature." },
+          "404": { description: "No webhook receiver for this app slug." },
+          "500": { description: "Signature verification misconfigured (missing signing secret)." },
         },
       },
     },

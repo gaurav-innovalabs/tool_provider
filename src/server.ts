@@ -7,9 +7,12 @@
 // UI's same-origin "Authorize"), not from other browser origins, so there's no Access-Control-Allow-Origin
 // to widen. Left un-gated, by design: webhookRoutes (external providers — Google/Slack — call these
 // directly and can't attach our token), publicConnectRoutes' /connect/:token (an end user's browser opens
-// it directly; it's already protected by its own single-use token), and mcpRoutes' /mcp/login + /mcp
+// it directly; it's already protected by its own single-use token), mcpRoutes' /mcp/login + /mcp
 // (the login form checks the same tokens itself, and /mcp authenticates each session with its own
-// per-user MCP token — see src/mcp/httpServer.ts).
+// per-user MCP token — see src/mcp/httpServer.ts), and docsAssetRoutes (just the generic swagger-ui-dist
+// static bundle, not app-specific). docsPageRoutes (/docs) is gated too but validates the token itself
+// instead of using withAccessToken, since a plain browser navigation can't set an Authorization header —
+// see src/api/docs_routes.ts for the login-page flow that works around that.
 
 import { adminRoutes } from "./api/admin_routes";
 import { userRoutes } from "./api/user_routes";
@@ -17,7 +20,7 @@ import { connectionRoutes, publicConnectRoutes } from "./api/connection_routes";
 import { actionRoutes } from "./api/action_routes";
 import { triggerRoutes } from "./api/trigger_routes";
 import { webhookRoutes } from "./api/webhook_routes";
-import { docsRoutes } from "./api/docs_routes";
+import { docsPageRoutes, openApiRoutes, docsAssetRoutes } from "./api/docs_routes";
 import { mcpRoutes } from "./api/mcp_routes";
 import { withAccessToken, withAdminAccessToken } from "./lib/apiAuth";
 import { config } from "./config";
@@ -33,7 +36,9 @@ export function createServer() {
       ...withAccessToken(actionRoutes),
       ...withAccessToken(triggerRoutes),
       ...webhookRoutes,
-      ...withAccessToken(docsRoutes),
+      ...docsPageRoutes,
+      ...withAccessToken(openApiRoutes),
+      ...docsAssetRoutes,
       ...mcpRoutes,
     },
     development: {

@@ -108,11 +108,21 @@ export const webhookRoutes = {
     },
   },
 
-  // Real, per the fan-in model already leaned toward in docs/research/triggers-patterns.md — one Slack Events
-  // API subscription URL for the whole app, not one per connection or trigger instance. Register this
-  // exact URL (BASE_URL + this path) as the Request URL under Slack app config -> Event Subscriptions.
-  "/webhooks/slack/events": {
-    POST: async (req: Request) => {
+  // Real, per the fan-in model already leaned toward in docs/research/triggers-patterns.md — one Events
+  // API subscription URL per app, not one per connection or trigger instance. Register this exact URL
+  // (BASE_URL + /webhooks/slack/events) as the Request URL under Slack app config -> Event Subscriptions.
+  //
+  // Path is /webhooks/:app/events, consistent with the generic tool_slug-shaped paths elsewhere
+  // (/actions/{tool_slug} etc.) even though Slack is the only app implementing this today — the body
+  // parsing/verification below (SlackEventsApiBody, verifySlackSignature) is genuinely Slack-Events-API-
+  // shaped, not a generic "webhook" concept, so it stays a per-app switch here rather than a speculative
+  // hook on AppDefinition/TriggerDefinition invented from a single data point.
+  "/webhooks/:app/events": {
+    POST: async (req: Request & { params: { app: string } }) => {
+      if (req.params.app !== "slack") {
+        return new Response(`No webhook receiver for app "${req.params.app}".`, { status: 404 });
+      }
+
       // Raw text, not req.json() — signature verification needs the EXACT bytes Slack signed; parsing to
       // JSON and re-stringifying would silently produce a different string and always fail verification.
       const rawBody = await req.text();

@@ -12,7 +12,7 @@ import { config } from "../config";
 
 // Header, or `?token=` query param — same fallback as extractBearerToken in src/mcp/httpServer.ts, so a
 // tool that can only set a URL (e.g. opening /docs?token=... directly in a browser) still works.
-function extractBearerToken(req: Request): string | null {
+export function extractBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth?.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
@@ -25,7 +25,7 @@ function unauthorized(message: string) {
   return Response.json({ error: message }, { status: 401 });
 }
 
-function isAccessToken(token: string): boolean {
+export function isAccessToken(token: string): boolean {
   return token === config.security.ACCESS_TOKEN || token === config.security.ADMIN_ACCESS_TOKEN;
 }
 
