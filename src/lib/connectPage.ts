@@ -115,7 +115,7 @@ export function errorPage(message: string): Response {
 // MCP login: types an access key into a real page instead of hand-editing an MCP client's JSON config
 // with raw env vars (src/mcp/loginRoutes.ts). Same visual shell as every other page here.
 
-export function mcpLoginFormPage(opts: { errorMessage?: string }): Response {
+export function mcpLoginFormPage(opts: { errorMessage?: string; userId?: string; apps?: string }): Response {
   const errorBanner = opts.errorMessage ? `<div class="error-banner">${escapeHtml(opts.errorMessage)}</div>` : "";
   return renderPage(
     "Connect MCP",
@@ -129,19 +129,23 @@ export function mcpLoginFormPage(opts: { errorMessage?: string }): Response {
          <input id="access_key" name="access_key" type="password" required autocomplete="off">
        </div>
        <div class="field">
+         <label for="user_id">Existing user ID (optional)</label>
+         <input id="user_id" name="user_id" type="text" placeholder="usr_... — leave blank to create a new one" autocomplete="off" value="${escapeHtml(opts.userId ?? "")}">
+       </div>
+       <div class="field">
          <label for="apps">Limit to apps (optional)</label>
-         <input id="apps" name="apps" type="text" placeholder="e.g. gmail,slack — leave blank for all" autocomplete="off">
+         <input id="apps" name="apps" type="text" placeholder="e.g. gmail,slack — leave blank for all" autocomplete="off" value="${escapeHtml(opts.apps ?? "")}">
        </div>
        <button type="submit">Continue</button>
      </form>
-     <div class="footer">Internal use only — this key is not for public distribution</div>`,
+     <div class="footer">Internal use only — this key is not for public distribution. Save the user ID from your last login here to reconnect as the same identity (same connections) instead of starting fresh.</div>`,
   );
 }
 
 // `token` is shown once, in plaintext, on purpose — it's the caller's only chance to copy it (we never
 // display it again; resolveMcpLoginToken only ever gets checked, not read back for display elsewhere).
 // No copy-to-clipboard JS button — deliberately zero JS across every page in this file (see file header).
-export function mcpLoginSuccessPage(opts: { mcpUrl: string; token: string }): Response {
+export function mcpLoginSuccessPage(opts: { mcpUrl: string; token: string; userId: string; reused: boolean }): Response {
   return renderPage(
     "MCP connected",
     `<div class="badge success">&#10003;</div>
@@ -155,7 +159,11 @@ export function mcpLoginSuccessPage(opts: { mcpUrl: string; token: string }): Re
        <label>Bearer token</label>
        <input type="text" readonly value="${escapeHtml(opts.token)}">
      </div>
-     <div class="footer">Send the token as <code>Authorization: Bearer &lt;token&gt;</code>, or append <code>?token=&lt;token&gt;</code> to the URL if your client only accepts a plain URL.</div>`,
+     <div class="field">
+       <label>User ID${opts.reused ? " (reused — same connections as before)" : " (new — save this to log back in as this identity)"}</label>
+       <input type="text" readonly value="${escapeHtml(opts.userId)}">
+     </div>
+     <div class="footer">Send the token as <code>Authorization: Bearer &lt;token&gt;</code>, or append <code>?token=&lt;token&gt;</code> to the URL if your client only accepts a plain URL. Next time, paste the User ID above into the login form's "Existing user ID" field to reconnect as the same identity instead of starting over.</div>`,
   );
 }
 
