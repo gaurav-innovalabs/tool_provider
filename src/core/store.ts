@@ -7,7 +7,7 @@
 // decrypted `.secrets`. Internally the DB column is `secrets_encrypted` (text, opaque base64), never a
 // plaintext/jsonb column — see src/db/schema.ts's comment on why not jsonb specifically.
 
-import { eq, desc, and, lt } from "drizzle-orm";
+import { eq, desc, and, or, lt, isNotNull } from "drizzle-orm";
 import { orm } from "../lib/postgres";
 import { users as usersTable, connections as connectionsTable, triggerInstances as triggerInstancesTable, actionLogs as actionLogsTable, triggerLogs as triggerLogsTable } from "../db/schema";
 import { encrypt, decrypt } from "../lib/cipher";
@@ -38,6 +38,7 @@ function triggerInstanceRowToTriggerInstance(row: typeof triggerInstancesTable.$
     webhook_url: row.webhook_url,
     poll_interval_ms: row.poll_interval_ms,
     cursor: row.cursor,
+    config: row.config,
     extra_metadata: row.extra_metadata as Record<string, unknown>,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -196,14 +197,52 @@ export const triggerLogStore = {
     const rows = await orm.select().from(triggerLogsTable).orderBy(desc(triggerLogsTable.ran_at)).limit(limit);
     return rows.map(triggerLogRowToTriggerLogEntry);
   },
+  // A "quiet" poll-attempt row — the scheduler checked a poll-mode trigger (Gmail) and genuinely found
+  // nothing new: status "success", no error, no payload (poll-attempt rows never carry one — see
+  // TriggerLogEntry's own comment). Filtered OUT of the two client-facing list routes below by default
+  // (includeEmptyPolls=false) since they're pure "nothing happened" noise, not signal — a caller checking
+  // logs almost always wants "what fired" or "what went wrong", not a scroll of quiet checks. Error rows
+  // (missing connection, non-pollable trigger, an actual poll failure) are NEVER filtered by this,
+  // regardless of includeEmptyPolls — those are always real signal.
+  isEmptyPollAttempt(log: TriggerLogEntry): boolean {
+    return log.status === "success" && log.payload === undefined;
+  },
+  // The OTHER half of "consistent, one-unit" log rows: `data_found` (above) says whether this row IS an
+  // event (as opposed to a quiet poll-attempt row); `data_sendable` says, for that event, whether it was
+  // actually delivered to webhook_url or not — the same signal `status`/`error` already carry, surfaced as
+  // one flat boolean so a caller doesn't have to know "status === 'error' means delivery failed" is even a
+  // thing. A quiet poll-attempt row (no event, nothing to send) is always false here too — there is nothing
+  // for this flag to be true ABOUT.
+  isDataSendable(log: TriggerLogEntry): boolean {
+    return log.payload !== undefined && log.status === "success";
+  },
   // Client-facing "what has this trigger instance actually done" — status/webhook_url/history, the same
   // per-run detail GET /admin/trigger_logs gives an admin, scoped to one instance instead of every user's.
   // Ownership (does this instance belong to the caller's user_id) is checked by the route, not here.
-  async listByInstance(triggerInstanceId: string, limit: number): Promise<TriggerLogEntry[]> {
+  // `includeEmptyPolls` filters at the SQL level (not after fetching) so `limit` still returns up to N
+  // genuinely relevant rows instead of silently returning fewer once quiet polls are dropped client-side.
+  async listByInstance(triggerInstanceId: string, limit: number, includeEmptyPolls = false): Promise<TriggerLogEntry[]> {
+    const scope = eq(triggerLogsTable.trigger_instance_id, triggerInstanceId);
     const rows = await orm
       .select()
       .from(triggerLogsTable)
-      .where(eq(triggerLogsTable.trigger_instance_id, triggerInstanceId))
+      .where(includeEmptyPolls ? scope : and(scope, or(eq(triggerLogsTable.status, "error"), isNotNull(triggerLogsTable.payload))))
+      .orderBy(desc(triggerLogsTable.ran_at))
+      .limit(limit);
+    return rows.map(triggerLogRowToTriggerLogEntry);
+  },
+  // Client-facing "everything that's fired across EVERY trigger I've subscribed to" — same idea as
+  // listByInstance above but not scoped to one trigger_instance_id, for "what happened recently" without
+  // already knowing which specific instance to check. `user_id`/`app` are denormalized onto every log row
+  // (see triggerLogRowToTriggerLogEntry) specifically so this can filter without a join back to
+  // trigger_instances. Optional `app` narrows to one app's triggers, same filter shape connectionStore's
+  // listByUser already has. Same `includeEmptyPolls` SQL-level filtering as listByInstance above.
+  async listByUser(userId: string, app: string | undefined, limit: number, includeEmptyPolls = false): Promise<TriggerLogEntry[]> {
+    const scope = app ? and(eq(triggerLogsTable.user_id, userId), eq(triggerLogsTable.app, app)) : eq(triggerLogsTable.user_id, userId);
+    const rows = await orm
+      .select()
+      .from(triggerLogsTable)
+      .where(includeEmptyPolls ? scope : and(scope, or(eq(triggerLogsTable.status, "error"), isNotNull(triggerLogsTable.payload))))
       .orderBy(desc(triggerLogsTable.ran_at))
       .limit(limit);
     return rows.map(triggerLogRowToTriggerLogEntry);

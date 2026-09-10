@@ -12,6 +12,7 @@ import { connectionStore, actionLogStore } from "../core/store";
 import { findByToolSlug, listApps, toolSlug } from "../core/registry";
 import { ensureFreshConnection } from "../core/tokenRefresh";
 import type { ActionDefinition } from "../types";
+import { formatError, errorResponse } from "../lib/errors";
 
 const requestBody = z.object({
   connection_id: z.string(),
@@ -19,14 +20,43 @@ const requestBody = z.object({
 });
 
 export const actionRoutes = {
-  // GET /actions?q=<free text> — search/list, mirrors Composio's GET /tools + MCP's search_tools (no
-  // per-action schema here, just enough to pick a tool_slug; call GET /actions/:tool_slug for the schema).
+  // GET /apps — toolkit-level list, mirrors Composio's GET /toolkits. Lightweight (no actions/schemas
+  // inlined) — an agent starts here to pick an app_slug, then calls GET /actions?app_slug=... below. Closes
+  // the "no app-level route yet" gap noted at the top of tool_provider.http's comparison section.
+  "/apps": {
+    GET: async () => {
+      const apps = listApps().map((app) => ({
+        app_slug: app.id,
+        name: app.name,
+        auth_type: app.auth.type,
+        action_count: app.actions.length,
+        trigger_count: app.triggers.length,
+      }));
+      return Response.json({ apps });
+    },
+  },
+
+  // GET /actions?q=<free text>&app_slug=<app> — search/list, mirrors Composio's GET /tools + MCP's
+  // search_tools (no per-action schema here, just enough to pick a tool_slug; call GET /actions/:tool_slug
+  // for the schema). Requires q or app_slug — dumping every action across every app isn't useful to a
+  // caller/agent and only gets worse as more apps are registered; GET /apps above is the entry point for
+  // "what apps exist", this is the entry point for "what actions does one app (or a keyword) match".
   "/actions": {
     GET: async (req: Request) => {
-      const q = new URL(req.url).searchParams.get("q")?.toLowerCase().trim();
+      const params = new URL(req.url).searchParams;
+      const q = params.get("q")?.toLowerCase().trim();
+      const appSlug = params.get("app_slug")?.toLowerCase().trim();
       const words = q ? q.split(/\s+/).filter(Boolean) : [];
 
-      const tools = listApps().flatMap((app) =>
+      if (words.length === 0 && !appSlug) {
+        return Response.json(
+          { error: "Pass ?q=<search term> or ?app_slug=<app> — see GET /apps for the list of app_slug values." },
+          { status: 400 },
+        );
+      }
+
+      const apps = appSlug ? listApps().filter((app) => app.id.toLowerCase() === appSlug) : listApps();
+      const tools = apps.flatMap((app) =>
         (app.actions as ActionDefinition[]).map((action) => ({
           tool_slug: toolSlug(app.id, action.key),
           app: app.id,
@@ -35,13 +65,12 @@ export const actionRoutes = {
         })),
       );
 
-      if (words.length === 0) {
-        return Response.json({ tools });
-      }
-      const filtered = tools.filter((t) => {
-        const haystack = `${t.tool_slug} ${t.description}`.toLowerCase();
-        return words.every((w) => haystack.includes(w));
-      });
+      const filtered = words.length === 0
+        ? tools
+        : tools.filter((t) => {
+            const haystack = `${t.tool_slug} ${t.description}`.toLowerCase();
+            return words.every((w) => haystack.includes(w));
+          });
       return Response.json({ tools: filtered });
     },
   },
@@ -118,8 +147,12 @@ export const actionRoutes = {
 
         return Response.json(parsedOutput);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const status = err instanceof z.ZodError ? 400 : 500;
+        // The audit trail (action_logs, /admin/logs — admin-gated) always gets the FULL formatted message,
+        // regardless of status — that's exactly the place a developer should be able to see the real
+        // detail. The HTTP response to the caller goes through errorResponse() instead, which additionally
+        // sanitizes a raw database driver error (never leak SQL/params to a client) and unconditionally
+        // logs every 5xx server-side — see src/lib/errors.ts's header comment.
+        const message = formatError(err);
 
         if (connectionId) {
           await actionLogStore.append({
@@ -135,7 +168,7 @@ export const actionRoutes = {
           });
         }
 
-        return Response.json({ error: message }, { status });
+        return errorResponse(err);
       }
     },
   },

@@ -11,6 +11,8 @@
 
 import { z } from "zod";
 import type { TriggerDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
+import { config } from "../../../config";
 
 export interface GmailHistoryCursor {
   historyId: string;
@@ -19,11 +21,25 @@ export interface GmailHistoryCursor {
 export interface NewLabeledEmailEvent {
   message_id: string;
   label_ids_added: string[];
+  // Previously ONLY message_id + label_ids_added — a caller had no way to tell WHAT email got labeled
+  // without an extra get_email call per event. Enriched to match new_email/new_draft/new_sent_email's own
+  // shape: from/to/subject/snippet, plus the message's own date (Gmail's `internalDate`, NOT the
+  // envelope's own delivery `timestamp`).
+  from: string;
+  to: string;
+  subject: string;
+  snippet: string;
+  received_at: string;
 }
 
 const newLabeledEmailPayload: z.ZodType<NewLabeledEmailEvent> = z.object({
   message_id: z.string(),
   label_ids_added: z.array(z.string()),
+  from: z.string(),
+  to: z.string(),
+  subject: z.string(),
+  snippet: z.string(),
+  received_at: z.string(),
 });
 
 interface GmailProfileResponse {
@@ -36,10 +52,21 @@ interface GmailHistoryListResponse {
   error?: { code: number; message: string };
 }
 
+interface GmailMessageGetResponse {
+  id: string;
+  snippet: string;
+  internalDate: string; // epoch millis, as a string — present regardless of `format`
+  payload: { headers: { name: string; value: string }[] };
+}
+
+function header(msg: GmailMessageGetResponse, name: string): string {
+  return msg.payload.headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
 async function seedCursor(authHeaders: Record<string, string>): Promise<GmailHistoryCursor> {
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: authHeaders });
   if (!res.ok) {
-    throw new Error(`Gmail new_labeled_email trigger: failed to seed historyId (${res.status}): ${await res.text()}`);
+    throw new Error(`Gmail new_labeled_email trigger: failed to seed historyId (${res.status}): ${await describeGoogleApiError(res)}`);
   }
   const profile = (await res.json()) as GmailProfileResponse;
   return { historyId: profile.historyId };
@@ -49,7 +76,7 @@ export const newLabeledEmail: TriggerDefinition<GmailHistoryCursor, NewLabeledEm
   key: "new_labeled_email",
   description: "Fires when a label is applied to an email in the connected Gmail account.",
   mode: "poll",
-  defaultPollIntervalMs: 8 * 60 * 1000, // 8 min, per spec
+  defaultPollIntervalMs: config.apps.gmail.GMAIL_POLL_INTERVAL_MS, // env-configurable, default 8 min — see config.ts's comment
   payload: newLabeledEmailPayload,
   async poll(connection, cursor) {
     if (!connection.secrets?.access_token) {
@@ -75,9 +102,47 @@ export const newLabeledEmail: TriggerDefinition<GmailHistoryCursor, NewLabeledEm
       throw new Error(`Gmail new_labeled_email trigger failed (${res.status}): ${data.error?.message ?? res.statusText}`);
     }
 
-    const events = (data.history ?? []).flatMap((h) =>
-      (h.labelsAdded ?? []).map((entry) => ({ message_id: entry.message.id, label_ids_added: entry.labelIds })),
+    const labelEntries = (data.history ?? []).flatMap((h) => h.labelsAdded ?? []);
+    // Fetch each unique message's metadata ONCE (not once per labelsAdded entry — the same message can
+    // appear more than once in one history page, e.g. two separate label-add actions), then reuse it for
+    // every entry pointing at that message.
+    const uniqueIds = [...new Set(labelEntries.map((entry) => entry.message.id))];
+
+    // A single message's fetch failing here must NOT throw and abort the whole poll() call — see
+    // newEmail.ts's fuller comment on the same pattern: it would leave nextCursor unreturned, permanently
+    // stuck re-fetching the same failing message on every future poll. Skip and log instead.
+    const messageById = new Map<string, GmailMessageGetResponse>();
+    await Promise.all(
+      uniqueIds.map(async (id) => {
+        const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`);
+        msgUrl.searchParams.set("format", "metadata");
+        msgUrl.searchParams.append("metadataHeaders", "From");
+        msgUrl.searchParams.append("metadataHeaders", "To");
+        msgUrl.searchParams.append("metadataHeaders", "Subject");
+        const msgRes = await fetch(msgUrl, { headers: authHeaders });
+        if (!msgRes.ok) {
+          console.warn(`[gmail new_labeled_email] skipping message ${id}: fetch failed (${msgRes.status}): ${await describeGoogleApiError(msgRes)}`);
+          return;
+        }
+        messageById.set(id, (await msgRes.json()) as GmailMessageGetResponse);
+      }),
     );
+
+    const events = labelEntries
+      .map((entry): NewLabeledEmailEvent | null => {
+        const msg = messageById.get(entry.message.id);
+        if (!msg) return null; // that message's fetch failed above — already logged, just skip this event
+        return {
+          message_id: msg.id,
+          label_ids_added: entry.labelIds,
+          from: header(msg, "From"),
+          to: header(msg, "To"),
+          subject: header(msg, "Subject"),
+          snippet: msg.snippet,
+          received_at: new Date(Number(msg.internalDate)).toISOString(),
+        };
+      })
+      .filter((event): event is NewLabeledEmailEvent => event !== null);
 
     return { events, nextCursor: { historyId: data.historyId } };
   },

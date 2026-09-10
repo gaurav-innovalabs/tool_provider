@@ -32,14 +32,17 @@ describe("newEmail", () => {
         body: {
           id: "m1",
           snippet: "hi",
-          payload: { headers: [{ name: "From", value: "a@b.com" }, { name: "Subject", value: "Hey" }] },
+          internalDate: "1700000000000",
+          payload: { headers: [{ name: "From", value: "a@b.com" }, { name: "To", value: "me@x.com" }, { name: "Subject", value: "Hey" }] },
         },
       },
     ]);
 
     const result = await runPoll(newEmail, makeGmailConnection(), { historyId: "1000" });
 
-    expect(result.events).toEqual([{ message_id: "m1", from: "a@b.com", subject: "Hey", snippet: "hi" }]);
+    expect(result.events).toEqual([
+      { message_id: "m1", from: "a@b.com", to: "me@x.com", subject: "Hey", snippet: "hi", received_at: new Date(1700000000000).toISOString() },
+    ]);
     expect(result.nextCursor).toEqual({ historyId: "1010" });
   });
 
@@ -57,5 +60,35 @@ describe("newEmail", () => {
   test("throws when the connection has no access_token", async () => {
     mockGmailFetch([]);
     await expect(runPoll(newEmail, makeGmailConnection({}), null)).rejects.toThrow(/access_token/);
+  });
+
+  test("skips a message that 404s instead of aborting the whole poll (cursor still advances)", async () => {
+    mockGmailFetch([
+      {
+        body: {
+          historyId: "1020",
+          history: [{ messagesAdded: [{ message: { id: "m-ok" } }, { message: { id: "m-gone" } }] }],
+        },
+      },
+      {
+        body: {
+          id: "m-ok",
+          snippet: "still here",
+          internalDate: "1700000000000",
+          payload: { headers: [{ name: "From", value: "a@b.com" }, { name: "To", value: "me@x.com" }, { name: "Subject", value: "Hi" }] },
+        },
+      },
+      { status: 404, body: { error: { code: 404, message: "Requested entity was not found." } } },
+    ]);
+
+    const result = await runPoll(newEmail, makeGmailConnection(), { historyId: "1000" });
+
+    // The failing message is silently skipped (logged, not thrown) — NOT re-thrown, and critically the
+    // cursor still advances to the new historyId, so the next poll moves forward instead of retrying the
+    // same failing message forever (see newEmail.ts's comment on why that would otherwise be permanent).
+    expect(result.events).toEqual([
+      { message_id: "m-ok", from: "a@b.com", to: "me@x.com", subject: "Hi", snippet: "still here", received_at: new Date(1700000000000).toISOString() },
+    ]);
+    expect(result.nextCursor).toEqual({ historyId: "1020" });
   });
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   message_id: z.string().describe("Gmail message id, e.g. the `id` field from list_recent_emails"),
@@ -79,7 +80,7 @@ export const getEmail: ActionDefinition<Input, Output> = {
 
     const res = await fetch(url, { headers: { Authorization: `Bearer ${connection.secrets.access_token}` } });
     if (!res.ok) {
-      throw new Error(`Gmail get_email failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail get_email failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
     const msg = (await res.json()) as GmailMessageGetResponse;
     const { text, html } = extractBodies(msg.payload);

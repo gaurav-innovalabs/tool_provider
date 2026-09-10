@@ -13,7 +13,7 @@
 // webhook_routes.ts, not here — see that file's header comment for why.
 
 import { z } from "zod";
-import { connectionStore } from "../core/store";
+import { connectionStore, userStore } from "../core/store";
 import { getApp } from "../core/registry";
 import { buildAuthorizeUrl } from "../lib/oauth";
 import { createConnectToken, resolveConnectToken, deleteConnectToken } from "../lib/redis";
@@ -21,6 +21,7 @@ import { config } from "../config";
 import { PENDING_CONNECTION_TTL_MS } from "../core/connectionExpiry";
 import { errorPage, successPage, fieldFormPage as renderFieldFormPage } from "../lib/connectPage";
 import type { AppDefinition, Connection } from "../types";
+import { formatError, errorResponse } from "../lib/errors";
 
 const requestBody = z.object({
   user_id: z.string(),
@@ -72,7 +73,24 @@ export const connectionRoutes = {
     POST: async (req: Request) => {
       try {
         const body = requestBody.parse(await req.json());
-        const app = getApp(body.app); // throws on unknown app — caught below as a 500; see registry.ts TODO on a typed 404 instead
+
+        // Both checked explicitly, BEFORE any insert — connections.user_id is a real foreign key to
+        // users.user_id, so inserting for a user_id that doesn't exist used to fall straight through to
+        // Postgres's own constraint violation: an uncaught 500 whose message was the raw
+        // "Failed query: insert into ... params: <every bound value>" text from the driver, leaked
+        // verbatim to the client. A missing reference the caller gave us is a client mistake (400/404),
+        // never a server failure (500) — same reasoning trigger_routes.ts's subscribe route already
+        // applies to connection_id/app.
+        let app: ReturnType<typeof getApp>;
+        try {
+          app = getApp(body.app);
+        } catch {
+          return Response.json({ error: `Unknown app: "${body.app}"` }, { status: 400 });
+        }
+        const user = await userStore.get(body.user_id);
+        if (!user) {
+          return Response.json({ error: `Unknown user: "${body.user_id}"` }, { status: 404 });
+        }
 
         const connection_id = `conn_${crypto.randomUUID()}`;
         const now = new Date().toISOString();
@@ -119,8 +137,7 @@ export const connectionRoutes = {
         // "custom" auth type: declared in the AppAuthConfig union (types.ts) but no app uses it yet.
         return Response.json({ error: `Auth type "${app.auth.type}" has no connect flow implemented yet` }, { status: 501 });
       } catch (err) {
-        const status = err instanceof z.ZodError ? 400 : 500;
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+        return errorResponse(err);
       }
     },
   },
@@ -229,8 +246,8 @@ export const publicConnectRoutes = {
         } catch (err) {
           // Re-render the same form with the real provider error, token still valid — the user can retry.
           return app.auth.type === "api_key"
-            ? fieldFormPage(app, req.params.token, err instanceof Error ? err.message : String(err))
-            : errorPage(err instanceof Error ? err.message : String(err));
+            ? fieldFormPage(app, req.params.token, formatError(err))
+            : errorPage(formatError(err));
         }
       }
 

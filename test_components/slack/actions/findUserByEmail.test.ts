@@ -10,12 +10,31 @@ afterEach(() => {
 });
 
 describe("findUserByEmail", () => {
-  test("finds a user and passes the email as a query param", async () => {
-    const { calls } = mockSlackFetch([{ body: { ok: true, user: { id: "U1", name: "alice", real_name: "Alice A" } } }]);
+  test("finds a user and passes the email as a query param, including active/deleted status", async () => {
+    const { calls } = mockSlackFetch([
+      {
+        body: {
+          ok: true,
+          user: { id: "U1", name: "alice", real_name: "Alice A", deleted: false, is_bot: false, is_owner: true, profile: { email: "alice@example.com", image_192: "https://x/alice.png" } },
+        },
+      },
+    ]);
 
     const result = await runAction(findUserByEmail, makeBotOnlyConnection(), { email: "alice@example.com" });
 
-    expect(result).toEqual({ id: "U1", name: "alice", real_name: "Alice A" });
+    expect(result).toEqual({
+      id: "U1",
+      name: "alice",
+      real_name: "Alice A",
+      deleted: false,
+      is_bot: false,
+      is_admin: undefined,
+      is_owner: true,
+      is_restricted: undefined,
+      is_ultra_restricted: undefined,
+      tz: undefined,
+      avatar_url: "https://x/alice.png",
+    });
     expect(calls[0]!.url).toContain(encodeURIComponent("alice@example.com"));
   });
 

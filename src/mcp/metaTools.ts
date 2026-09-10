@@ -35,6 +35,8 @@ import type {
   listTriggerInstancesOutput,
   listTriggerLogsInput,
   listTriggerLogsOutput,
+  listRecentTriggerLogsInput,
+  listRecentTriggerLogsOutput,
   getTriggerLogInput,
   getTriggerLogOutput,
   resendTriggerWebhookInput,
@@ -293,6 +295,7 @@ export function listTriggers(scope: AppScope): z.infer<typeof listTriggersOutput
       description: t.description,
       mode: t.mode,
       default_poll_interval_ms: t.defaultPollIntervalMs ?? null,
+      config: t.config ? (z.toJSONSchema(t.config) as Record<string, unknown>) : null,
     })),
   );
   return { triggers };
@@ -315,6 +318,13 @@ export async function subscribeTrigger(userId: string, input: z.infer<typeof sub
   }
 
   const poll_interval_ms = trigger.mode === "poll" ? (input.poll_interval_ms ?? trigger.defaultPollIntervalMs ?? null) : null;
+  // Same "validate against THIS trigger's own schema, not permissively" contract as
+  // trigger_routes.ts's POST /triggers/:app/:trigger/subscribe — throws (caught upstream as a tool error)
+  // on a bad shape rather than silently storing garbage config. `input.config ?? {}`, NOT bare
+  // `input.config`: every config schema is an object schema (all fields optional, but the object itself
+  // isn't) — parsing `undefined` for the common "no config" case fails otherwise, see that file's fuller
+  // comment on this exact bug.
+  const config = trigger.config ? trigger.config.parse(input.config ?? {}) : null;
   const trigger_instance_id = `ti_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   await triggerInstanceStore.create({
@@ -327,6 +337,7 @@ export async function subscribeTrigger(userId: string, input: z.infer<typeof sub
     webhook_url: input.webhook_url,
     poll_interval_ms,
     cursor: null,
+    config,
     extra_metadata: input.extra_metadata ?? {},
     created_at: now,
     updated_at: now,
@@ -369,7 +380,8 @@ export async function listTriggerLogs(userId: string, input: z.infer<typeof list
     throw new Error(`Unknown trigger instance: ${input.trigger_instance_id}`);
   }
   assertAppAllowed(instance.app, scope);
-  const logs = await triggerLogStore.listByInstance(input.trigger_instance_id, input.limit ?? 50);
+  const logs = await triggerLogStore.listByInstance(input.trigger_instance_id, input.limit ?? 20, input.include_empty_polls ?? false);
+  const withPayload = input.with_payload ?? true;
   return {
     logs: logs.map((l) => ({
       log_id: l.log_id,
@@ -378,6 +390,41 @@ export async function listTriggerLogs(userId: string, input: z.infer<typeof list
       error: l.error,
       webhook_url: l.webhook_url,
       resendable: l.payload !== undefined,
+      data_found: !triggerLogStore.isEmptyPollAttempt(l),
+      data_sendable: triggerLogStore.isDataSendable(l),
+      ...(withPayload ? { payload: l.payload as Record<string, unknown> | undefined } : {}),
+    })),
+  };
+}
+
+// ~ REST's GET /triggers/logs (no id) — everything that's fired recently across EVERY trigger this user
+// has subscribed to, not scoped to one trigger_instance_id like listTriggerLogs above requires. Scope
+// filtering happens twice here for two different reasons: `input.app` (if given) is validated against
+// `scope` up front so an out-of-scope app 400s clearly instead of just silently returning nothing; the
+// broader `scope.includes(l.app)` filter afterward covers the "no app filter given, but scope still
+// restricts which apps are visible" case a single WHERE clause in the store can't express without knowing
+// scope at the SQL layer.
+export async function listRecentTriggerLogs(userId: string, input: z.infer<typeof listRecentTriggerLogsInput>, scope: AppScope): Promise<z.infer<typeof listRecentTriggerLogsOutput>> {
+  if (input.app) {
+    assertAppAllowed(input.app, scope);
+  }
+  const logs = await triggerLogStore.listByUser(userId, input.app, input.limit ?? 20, input.include_empty_polls ?? false);
+  const withPayload = input.with_payload ?? true;
+  const scoped = scope ? logs.filter((l) => scope.includes(l.app)) : logs;
+  return {
+    logs: scoped.map((l) => ({
+      log_id: l.log_id,
+      trigger_instance_id: l.trigger_instance_id,
+      app: l.app,
+      trigger_key: l.trigger_key,
+      status: l.status,
+      ran_at: l.ran_at,
+      error: l.error,
+      webhook_url: l.webhook_url,
+      resendable: l.payload !== undefined,
+      data_found: !triggerLogStore.isEmptyPollAttempt(l),
+      data_sendable: triggerLogStore.isDataSendable(l),
+      ...(withPayload ? { payload: l.payload as Record<string, unknown> | undefined } : {}),
     })),
   };
 }
@@ -399,6 +446,8 @@ export async function getTriggerLog(userId: string, input: z.infer<typeof getTri
     webhook_url: log.webhook_url,
     payload: log.payload,
     resendable: log.payload !== undefined,
+    data_found: !triggerLogStore.isEmptyPollAttempt(log),
+    data_sendable: triggerLogStore.isDataSendable(log),
   };
 }
 

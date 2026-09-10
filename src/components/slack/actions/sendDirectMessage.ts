@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
   user: z.string().min(1), // Slack user id, e.g. "U0123456"
@@ -66,7 +67,7 @@ export const sendDirectMessage: ActionDefinition<Input, Output> = {
     });
     const openData = (await openRes.json()) as SlackApiResponse;
     if (!openRes.ok || !openData.ok) {
-      throw new Error(`Slack send_direct_message (conversations.open) failed: ${openData.error ?? openRes.statusText}`);
+      throw new Error(`Slack send_direct_message (conversations.open) failed: ${describeSlackError(openData.error ?? openRes.statusText)}`);
     }
     const channelId = typeof openData.channel === "string" ? openData.channel : openData.channel?.id;
     if (!channelId) {
@@ -88,7 +89,7 @@ export const sendDirectMessage: ActionDefinition<Input, Output> = {
     });
     const postData = (await postRes.json()) as SlackApiResponse;
     if (!postRes.ok || !postData.ok) {
-      throw new Error(`Slack send_direct_message (chat.postMessage) failed: ${postData.error ?? postRes.statusText}`);
+      throw new Error(`Slack send_direct_message (chat.postMessage) failed: ${describeSlackError(postData.error ?? postRes.statusText)}`);
     }
 
     return { ts: postData.ts!, channel: channelId };

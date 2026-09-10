@@ -7,57 +7,11 @@
 // Result page uses the same shared visual shell as the api_key connect form (src/lib/connectPage.ts) —
 // so an oauth2 callback and an api_key connect end up looking like one product, not two.
 
-import { connectionStore, triggerInstanceStore } from "../core/store";
+import { connectionStore } from "../core/store";
 import { getApp } from "../core/registry";
 import { exchangeCodeForToken } from "../lib/oauth";
 import { successPage, errorPage } from "../lib/connectPage";
-import { verifySlackSignature } from "../lib/slackSignature";
-import { deliverEvent } from "../core/scheduler";
-
-interface SlackEventsApiBody {
-  type: string; // "url_verification" | "event_callback" | ...
-  challenge?: string; // only present for url_verification
-  team_id?: string;
-  event?: {
-    type: string; // "message", "reaction_added", etc. — only "message" is handled
-    subtype?: string;
-    bot_id?: string;
-    [key: string]: unknown;
-  };
-}
-
-// Slack sends ONE Events API POST per app-level subscription — not per our TriggerInstance, not per our
-// Connection. This resolves "which of our connections does this team_id belong to" and fans the event out
-// to every active new_message TriggerInstance on that connection, reusing the exact same deliverEvent()
-// the poll-based scheduler uses (src/core/scheduler.ts) — same envelope shape either way.
-async function deliverSlackMessageEvent(teamId: string, rawEvent: NonNullable<SlackEventsApiBody["event"]>): Promise<void> {
-  const app = getApp("slack");
-  const trigger = app.triggers.find((t) => t.key === "new_message");
-  if (!trigger?.handleWebhook) {
-    return;
-  }
-
-  const connections = (await connectionStore.listAll()).filter(
-    (c) => c.app === "slack" && c.status === "active" && c.secrets?.team_id === teamId,
-  );
-  if (connections.length === 0) {
-    // No connection matches this workspace — nothing to deliver to. Not an error: could be a workspace
-    // that installed the app but has no active TriggerInstance, or a stale/uninstalled connection.
-    return;
-  }
-
-  const activeInstances = await triggerInstanceStore.listActive();
-
-  for (const connection of connections) {
-    const normalizedEvents = await trigger.handleWebhook(connection, rawEvent);
-    const instances = activeInstances.filter((i) => i.connection_id === connection.connection_id && i.trigger_key === "new_message");
-    for (const instance of instances) {
-      for (const event of normalizedEvents) {
-        await deliverEvent(instance, event);
-      }
-    }
-  }
-}
+import { formatError } from "../lib/errors";
 
 export const webhookRoutes = {
   "/oauth/callback/:app": {
@@ -99,68 +53,49 @@ export const webhookRoutes = {
         });
         return successPage(app.name);
       } catch (err) {
+        console.error("[oauth callback] failed:", err);
         await connectionStore.update(connection.connection_id, {
           status: "error",
           updated_at: new Date().toISOString(),
         });
-        return errorPage(err instanceof Error ? err.message : String(err));
+        return errorPage(formatError(err));
       }
     },
   },
 
-  // Real, per the fan-in model already leaned toward in docs/research/triggers-patterns.md — one Events
-  // API subscription URL per app, not one per connection or trigger instance. Register this exact URL
-  // (BASE_URL + /webhooks/slack/events) as the Request URL under Slack app config -> Event Subscriptions.
-  //
-  // Path is /webhooks/:app/events, consistent with the generic tool_slug-shaped paths elsewhere
-  // (/actions/{tool_slug} etc.) even though Slack is the only app implementing this today — the body
-  // parsing/verification below (SlackEventsApiBody, verifySlackSignature) is genuinely Slack-Events-API-
-  // shaped, not a generic "webhook" concept, so it stays a per-app switch here rather than a speculative
-  // hook on AppDefinition/TriggerDefinition invented from a single data point.
-  "/webhooks/:app/events": {
-    POST: async (req: Request & { params: { app: string } }) => {
-      if (req.params.app !== "slack") {
-        return new Response(`No webhook receiver for app "${req.params.app}".`, { status: 404 });
-      }
+  // Generic inbound-webhook dispatcher — ONE route for every app/provider, not one hand-written route per
+  // provider. `:hook` lets one app register more than one named receiver later (Slack has just "events"
+  // today: POST /webhooks/slack/events) without a new top-level route. This handler has ZERO per-provider
+  // knowledge on purpose — no signature verification, no event parsing, nothing Slack/Gmail/Stripe-shaped
+  // lives here. It only looks up `AppDefinition.webhooks[hook]` (types.ts documents the field; see
+  // src/components/slack/app.ts's `webhooks` block for the full request flow + how a new app plugs in) and
+  // hands that handler the raw, unparsed Request — the app's own src/components/<app>/webhooks/<hook>.ts
+  // owns everything from there (signature/HMAC verification, provider handshakes, mapping a raw payload to
+  // a TriggerDefinition.key, fan-out via src/core/scheduler.ts's deliverEvent). Adding a webhook receiver
+  // for a new app/provider is then a new sibling file + one `webhooks` map entry — never a change here.
+  "/webhooks/:app/:hook": {
+    POST: async (req: Request & { params: { app: string; hook: string } }) => {
+      // Logged here, at the generic entry point, BEFORE dispatch — so every inbound webhook is visible
+      // (including an unknown app/hook that 404s below) without relying on each provider-specific handler
+      // to log it itself. Deeper per-event logging (e.g. which Slack event TYPE it was) lives in the
+      // provider's own handler, e.g. src/components/slack/webhooks/events.ts.
+      console.log(`[webhooks] received POST /webhooks/${req.params.app}/${req.params.hook}`);
 
-      // Raw text, not req.json() — signature verification needs the EXACT bytes Slack signed; parsing to
-      // JSON and re-stringifying would silently produce a different string and always fail verification.
-      const rawBody = await req.text();
-
-      let signatureValid: boolean;
+      let app: ReturnType<typeof getApp>;
       try {
-        signatureValid = verifySlackSignature(rawBody, req.headers.get("x-slack-request-timestamp"), req.headers.get("x-slack-signature"));
-      } catch (err) {
-        console.error("[webhooks] Slack signature verification misconfigured:", err);
-        return new Response("Signature verification not configured", { status: 500 });
-      }
-      if (!signatureValid) {
-        return new Response("Invalid signature", { status: 401 });
+        app = getApp(req.params.app);
+      } catch {
+        console.warn(`[webhooks] 404: unknown app "${req.params.app}" — check the Request URL registered with the provider matches a real app slug.`);
+        return new Response(`Unknown app "${req.params.app}"`, { status: 404 });
       }
 
-      const body = JSON.parse(rawBody) as SlackEventsApiBody;
-
-      if (body.type === "url_verification") {
-        // Slack's own setup handshake, run once when you save the Request URL in their app config — echo
-        // the challenge back plain, not wrapped in anything else.
-        return Response.json({ challenge: body.challenge });
+      const handler = app.webhooks?.[req.params.hook];
+      if (!handler) {
+        console.warn(`[webhooks] 404: app "${app.id}" has no webhook receiver registered for hook "${req.params.hook}".`);
+        return new Response(`No webhook receiver "${req.params.hook}" registered for app "${app.id}"`, { status: 404 });
       }
 
-      if (body.type !== "event_callback" || !body.event || body.event.type !== "message" || !body.team_id) {
-        return new Response("ok"); // ack anything we don't handle — Slack retries on non-2xx
-      }
-
-      // Filter out bot/our-own messages — without this, our own post_message action (or any bot) would
-      // loop straight back through this same trigger.
-      if (body.event.subtype === "bot_message" || body.event.bot_id) {
-        return new Response("ok");
-      }
-
-      // Fire-and-forget: Slack requires an ack within 3s, and webhook_url delivery to our subscribers is
-      // a separate concern that must not block or fail this response.
-      deliverSlackMessageEvent(body.team_id, body.event).catch((err) => console.error("[webhooks] Slack event delivery failed:", err));
-
-      return new Response("ok");
+      return handler(req);
     },
   },
 };

@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({});
 
@@ -35,7 +36,7 @@ export const getCurrentUser: ActionDefinition<Input, Output> = {
       headers: { Authorization: `Bearer ${connection.secrets.access_token}` },
     });
     if (!res.ok) {
-      throw new Error(`Gmail get_current_user failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail get_current_user failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
     const data = (await res.json()) as GmailProfileResponse;
     return { email_address: data.emailAddress, messages_total: data.messagesTotal, threads_total: data.threadsTotal };

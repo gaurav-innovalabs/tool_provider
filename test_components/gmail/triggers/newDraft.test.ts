@@ -25,13 +25,16 @@ describe("newDraft", () => {
           id: "m1",
           labelIds: ["DRAFT"],
           snippet: "not sent yet",
-          payload: { headers: [{ name: "To", value: "x@y.com" }, { name: "Subject", value: "WIP" }] },
+          internalDate: "1700000000000",
+          payload: { headers: [{ name: "From", value: "me@x.com" }, { name: "To", value: "x@y.com" }, { name: "Subject", value: "WIP" }] },
         },
       },
     ]);
 
     const result = await runPoll(newDraft, makeGmailConnection(), { historyId: "1000" });
 
-    expect(result.events).toEqual([{ message_id: "m1", to: "x@y.com", subject: "WIP", snippet: "not sent yet" }]);
+    expect(result.events).toEqual([
+      { message_id: "m1", from: "me@x.com", to: "x@y.com", subject: "WIP", snippet: "not sent yet", updated_at: new Date(1700000000000).toISOString() },
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   label_id: z.string().min(1),
@@ -38,7 +39,7 @@ export const getLabel: ActionDefinition<Input, Output> = {
       headers: { Authorization: `Bearer ${connection.secrets!.access_token}` },
     });
     if (!res.ok) {
-      throw new Error(`Gmail get_label failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail get_label failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
     const data = (await res.json()) as GmailLabelGetResponse;

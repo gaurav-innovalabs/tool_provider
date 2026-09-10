@@ -143,6 +143,10 @@ export const listTriggersOutputTrigger = z.object({
   description: z.string(),
   mode: z.enum(["poll", "webhook"]),
   default_poll_interval_ms: z.number().nullable(),
+  // JSON Schema of the per-instance input props this trigger accepts as `config` on subscribe_trigger
+  // below (e.g. Slack's new_message: { channel?, thread_ts? } to scope to one channel/thread) — null for a
+  // trigger with nothing instance-scopable. Mirrors GET /triggers's own `config` field (trigger_routes.ts).
+  config: z.record(z.string(), z.unknown()).nullable(),
 });
 
 export const listTriggersOutput = z.object({
@@ -163,6 +167,10 @@ export const subscribeTriggerInput = z.object({
   trigger: z.string(), // trigger.key, from a prior list_triggers call
   webhook_url: z.string().url().describe("Where we POST each event once this trigger fires"),
   poll_interval_ms: z.number().int().min(60_000).optional().describe("Only meaningful for poll-mode triggers; omit to use the trigger's own default"),
+  // Per-instance input props — shape is per-trigger, see list_triggers's `config` JSON Schema for this
+  // trigger. E.g. Slack's new_message: { channel: "C0772SYKNN4" } to scope to one channel. Validated
+  // against the trigger's own schema server-side (metaTools.ts), same as trigger_routes.ts's REST route.
+  config: z.unknown().optional().describe("Per-instance input props scoping which events fire this subscription, e.g. { channel: \"C0772SYKNN4\" } for a Slack channel — see this trigger's `config` JSON Schema from list_triggers"),
   extra_metadata: extraMetadataSchema,
 });
 
@@ -212,7 +220,17 @@ export const listTriggerInstancesOutput = z.object({
 
 export const listTriggerLogsInput = z.object({
   trigger_instance_id: z.string().describe("From a prior list_trigger_instances call"),
-  limit: z.number().int().positive().max(200).default(50).optional(),
+  limit: z.number().int().positive().max(200).default(20).optional(),
+  // Defaults true — the whole point of checking a trigger's logs is almost always "what did my webhook
+  // actually receive", so inlining the payload by default avoids a second get_trigger_log call per row.
+  // Set false to skim many rows' status/error without the (sometimes large) payload bodies. Poll-attempt
+  // rows never have a payload regardless of this flag — that's expected, not an error.
+  with_payload: z.boolean().default(true).optional(),
+  // Defaults false — a poll-mode trigger (Gmail) logs one row every time it runs even when it finds
+  // nothing new (status success, no error, no payload). Those rows are filtered out by default since
+  // they're pure "nothing happened" noise, not signal. Set true to see them anyway (e.g. to confirm the
+  // scheduler is actually ticking).
+  include_empty_polls: z.boolean().default(false).optional(),
 });
 
 export const listTriggerLogsOutputLog = z.object({
@@ -221,13 +239,45 @@ export const listTriggerLogsOutputLog = z.object({
   ran_at: z.string(),
   error: z.string().optional(),
   webhook_url: z.string().optional(),
+  // The exact envelope delivered ({id, type, metadata, data, timestamp}) — present only on delivery rows,
+  // and only when `with_payload` (default true) wasn't set to false. Same shape get_trigger_log returns.
+  payload: z.record(z.string(), z.unknown()).optional(),
   // Mirrors REST's `resendable` field — presence of a captured payload is the actual signal, exposed as a
   // plain boolean so the calling agent doesn't have to know that.
   resendable: z.boolean(),
+  // Explicit, self-documenting version of the same "did anything actually fire" signal — true for a real
+  // delivery, false for a poll attempt (Gmail) that found nothing new that cycle.
+  data_found: z.boolean(),
+  // Consistent companion to data_found: was this event actually SENT to webhook_url or not — false for a
+  // quiet poll-attempt row (nothing to send) AND for a real event whose delivery failed, true only for a
+  // confirmed delivery. Same info as status/error, flattened to one boolean.
+  data_sendable: z.boolean(),
 });
 
 export const listTriggerLogsOutput = z.object({
   logs: z.array(listTriggerLogsOutputLog),
+});
+
+// --- list_recent_trigger_logs -------------------------------------------------------------------------
+// ~ REST's GET /triggers/logs (no id) — everything that's fired recently across EVERY trigger this user
+// has subscribed to, not scoped to one trigger_instance_id like list_trigger_logs above requires. Use this
+// when you want "what happened recently" without already knowing which specific instance to check.
+
+export const listRecentTriggerLogsInput = z.object({
+  app: z.string().optional().describe("Narrow to one app's triggers, e.g. \"gmail\""),
+  limit: z.number().int().positive().max(200).default(20).optional(),
+  with_payload: z.boolean().default(true).optional(),
+  include_empty_polls: z.boolean().default(false).optional(),
+});
+
+export const listRecentTriggerLogsOutputLog = listTriggerLogsOutputLog.extend({
+  trigger_instance_id: z.string(),
+  app: z.string(),
+  trigger_key: z.string(),
+});
+
+export const listRecentTriggerLogsOutput = z.object({
+  logs: z.array(listRecentTriggerLogsOutputLog),
 });
 
 // --- get_trigger_log ---------------------------------------------------------------------------------
@@ -251,6 +301,8 @@ export const getTriggerLogOutput = z.object({
   webhook_url: z.string().optional(),
   payload: z.unknown().describe("The exact envelope delivered — {id, type, metadata, data, timestamp} — absent on a poll-attempt row"),
   resendable: z.boolean(),
+  data_found: z.boolean(),
+  data_sendable: z.boolean(),
 });
 
 export const resendTriggerWebhookInput = z.object({

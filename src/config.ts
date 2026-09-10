@@ -45,6 +45,15 @@ const envSchema = z.object({
 
   GMAIL_CLIENT_ID: z.string().optional().default(""),
   GMAIL_CLIENT_SECRET: z.string().optional().default(""),
+  // Default poll cadence for every Gmail trigger (new_email, new_draft, new_sent_email, new_labeled_email,
+  // new_starred_email) — was a hardcoded `8 * 60 * 1000` literal duplicated in all 5 trigger files. This is
+  // only the DEFAULT a new subscription gets when its own POST /triggers/gmail/:trigger/subscribe body
+  // doesn't specify `poll_interval_ms` — that per-subscription override (60s minimum, same floor as this
+  // env var) already existed and still takes precedence; this just controls what "didn't ask" resolves to,
+  // e.g. set to 120000 (2 min) here for faster local iteration without having to pass poll_interval_ms on
+  // every single subscribe call during testing. 60s minimum matches trigger_routes.ts's own
+  // MIN_POLL_INTERVAL_MS floor — this can't set a default lower than what subscribe-time would reject anyway.
+  GMAIL_POLL_INTERVAL_MS: z.coerce.number().int().min(60_000).default(8 * 60 * 1000),
 
   // SerpApi is api_key-type — callers supply their own key at connect time (see .env.example), so nothing
   // shared to validate here.
@@ -95,6 +104,7 @@ export const config = {
     gmail: {
       GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID,
       GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET,
+      GMAIL_POLL_INTERVAL_MS: env.GMAIL_POLL_INTERVAL_MS,
     },
     serpapi: {
       // bring-your-own-key at connect time — nothing platform-level to hold here

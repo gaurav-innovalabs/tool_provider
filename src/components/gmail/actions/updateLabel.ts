@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   label_id: z.string().min(1),
@@ -38,7 +39,7 @@ export const updateLabel: ActionDefinition<Input, Output> = {
       body: JSON.stringify({ name: params.name }),
     });
     if (!res.ok) {
-      throw new Error(`Gmail update_label failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail update_label failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
     const data = (await res.json()) as GmailLabelPatchResponse;

@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({});
 
@@ -43,7 +44,7 @@ export const getCurrentUser: ActionDefinition<Input, Output> = {
     });
     const data = (await res.json()) as SlackAuthTestResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack get_current_user failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack get_current_user failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
     return { user_id: data.user_id ?? "", user: data.user ?? "", team_id: data.team_id ?? "", team: data.team ?? "", bot_id: data.bot_id };
   },

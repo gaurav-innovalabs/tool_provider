@@ -22,8 +22,8 @@
 
 ### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
 ### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
-@access_token = REPLACE_ME_ACCESS_TOKEN
-@admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
+@access_token = 3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1
+@admin_access_token = b9fa8a575619f0c6d62c202b8946a57746e9b972e465a169349e6f8684734add
 
 # ============================================================================
 # COMPARISON — what we have vs. Composio's real API surface (74 endpoints total)
@@ -65,7 +65,13 @@
 #                                              client's own editable notes space on a TriggerInstance)
 # DELETE /triggers/{id}                      ~ DELETE /trigger_instances/manage/{triggerId}
 # GET    /triggers/instances/{id}/logs       ~ no direct Composio equivalent — per-instance delivery/poll
-#                                              run history (status, webhook_url, error, resendable)
+#                                              run history (status, webhook_url, error, resendable, and by
+#                                              default the full delivered `payload` inlined — no second
+#                                              GET /triggers/logs/{id} call needed per row; ?with_payload=false
+#                                              to skim without it, ?limit=N to page, default 20)
+# GET    /triggers/logs                      ~ no direct Composio equivalent — same as the line above but
+#                                              across EVERY trigger instance this user has, not just one;
+#                                              each row carries its own trigger_instance_id/app/trigger_key
 # GET    /triggers/logs/{log_id}             ~ GET  /v1/events/{id} (Stripe) — one event's full body,
 #                                              including its payload; `log_id` IS the event id for a
 #                                              delivery row (src/core/scheduler.ts's deliverEvent/
@@ -150,7 +156,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned user_id into this variable for the requests below
-@user_id = usr_REPLACE_ME
+@user_id = usr_bf9d74a9-c070-48ec-b3ad-bf18f0b24b67
 
 ### ----------------------------------------------------
 ### 🔧 Connect an app — oauth2 (Gmail) or api_key (SerpApi): IDENTICAL shape either way
@@ -170,12 +176,13 @@ Content-Type: application/json
 
 {
   "user_id": "{{user_id}}",
-  "app": "gmail"
+  "app": "gmail",
+  "extra_metadata": { "note": "created from tool_provider.http" }
 }
 
 ### Copy the returned connect_url and open it in a browser to finish OAuth. See test_components/gmail/gmail.http
 ### for the full Gmail action + trigger flow once connected.
-@gmail_connection_id = conn_REPLACE_ME
+@gmail_connection_id = conn_c99cb40d-6751-4ff1-8a96-f8e31eb7dbd4
 
 ### ----------------------------------------------------
 ### 🔧 Connect an app — oauth2 (Slack). Same shape as Gmail above. See test_components/slack/slack.http for
@@ -187,9 +194,11 @@ Content-Type: application/json
 
 {
   "user_id": "{{user_id}}",
-  "app": "slack"
+  "app": "slack",
+  "extra_metadata": { "note": "created from tool_provider.http" }
 }
 
+###
 @slack_connection_id = conn_REPLACE_ME
 
 ### ----------------------------------------------------
@@ -201,7 +210,8 @@ Content-Type: application/json
 
 {
   "user_id": "{{user_id}}",
-  "app": "serpapi"
+  "app": "serpapi",
+  "extra_metadata": { "note": "created from tool_provider.http" }
 }
 
 ### Copy the returned connect_url and open it in a browser — it's our own field-collection form for SerpApi
@@ -210,10 +220,10 @@ Content-Type: application/json
 ### ----------------------------------------------------
 ### 🔧 Check a connection's status
 #### composio ->>> GET /connected_accounts/{id} — status: INITIATED/ACTIVE/FAILED/EXPIRED/INACTIVE +
-#### status_reason. GET /connected_accounts (no id) lists ALL connections with filters.
+#### status_reason.
 #### but we have: GET /connections/{id} only — smaller state machine (pending/active/revoked/error, no
-#### distinct EXPIRED/auto-timeout — see research/execution-models.md's Composio comparison note), and
-#### there is NO list-all-connections endpoint at all (real gap, noted above). Secrets always redacted.
+#### distinct EXPIRED/auto-timeout — see research/execution-models.md's Composio comparison note). Secrets
+#### always redacted.
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{gmail_connection_id}}
 Authorization: Bearer {{access_token}}
@@ -223,28 +233,56 @@ GET {{base_url}}/connections/{{serpapi_connection_id}}
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 List / search tools (~ Composio's GET /tools)
+### 🔧 List a user's connections (~ Composio's GET /connected_accounts, filtered to `user_id`)
+#### Client-facing "which connections have I created" — NOT an admin "list every connection across every
+#### user" view, that's GET /admin/users below. Optional &app=gmail to filter to one app.
 ### ----------------------------------------------------
-GET {{base_url}}/actions
+GET {{base_url}}/connections?user_id={{user_id}}
 Authorization: Bearer {{access_token}}
 
 ###
-GET {{base_url}}/actions?q=gmail
+GET {{base_url}}/connections?user_id={{user_id}}&app=gmail
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Remove a connection (~ Composio's DELETE /connected_accounts/{id}) — real revoke, not cosmetic:
+#### flips status -> "revoked" and clears `secrets`. `user_id` required, checked against the connection's
+#### own owner. Doesn't delete the row (action_logs/trigger_instances still FK to it). Full per-app
+#### examples: test_components/gmail/gmail.http and test_components/slack/slack.http.
+### ----------------------------------------------------
+DELETE {{base_url}}/connections/{{serpapi_connection_id}}?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 List available apps (~ Composio's GET /toolkits) — the entry point: pick an app_slug here, then
+#### narrow GET /actions below with it. Lightweight — no actions/schemas inlined, just counts.
+### ----------------------------------------------------
+GET {{base_url}}/apps
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 List / search tools (~ Composio's GET /tools). No more bare GET /actions — it now 400s unless you
+#### pass ?q=<term> and/or ?app_slug=<app> (from GET /apps above), same complaint as Composio's own
+#### "don't dump every tool across every toolkit" flow.
+### ----------------------------------------------------
+GET {{base_url}}/actions?app_slug=gmail
+Authorization: Bearer {{access_token}}
+
+###
+GET {{base_url}}/actions?q=recent
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Get one tool's real schema (~ Composio's GET /tools/{slug})
 ### ----------------------------------------------------
-GET {{base_url}}/actions/GMAIL_SEND_EMAIL
+GET {{base_url}}/actions/GMAIL_LIST_RECENT_EMAILS
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 List available apps / their actions & triggers
-#### composio ->>> GET /toolkits, /toolkits/{slug}, /tools?toolkit_slug=..., /tools/enum
-#### but we have: no app-level (/toolkits) route yet (real gap, noted above) — GET /actions above covers
-#### the tool level. GET /openapi.json still works too, which
-#### DOES list every real action with its live schema (generated, not hand-written) — just not shaped
-#### as a "toolkit list". GET /triggers below covers the trigger side the same way.
+### 🔧 Full OpenAPI surface — GET /apps + GET /actions above now cover the toolkit/tool-list views
+#### Composio splits across GET /toolkits, /toolkits/{slug}, /tools?toolkit_slug=..., /tools/enum.
+#### GET /openapi.json still works too, and DOES list every real action with its live schema
+#### (generated, not hand-written). GET /triggers below covers the trigger side the same way.
 ### ----------------------------------------------------
 GET {{base_url}}/openapi.json
 Authorization: Bearer {{access_token}}
@@ -278,7 +316,20 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "#general", "text": "Hello from tool_provider.http" }
+  "input": { "channel": "#test-user", "text": "Hello from tool_provider.http" }
+}
+
+### ----------------------------------------------------
+### 🔧 Example action — Slack: get_channel_history (receive/read messages from #test-user). `channel_id` —
+### conversations.history requires the real ID, unlike post_message's `channel` (which accepts a "#name").
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_GET_CHANNEL_HISTORY
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel_id": "C0772SYKNN4", "limit": 20 }
 }
 
 ### ----------------------------------------------------
@@ -309,8 +360,8 @@ GET {{base_url}}/triggers
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 Example trigger — subscribe (Gmail new_email). Rest of Gmail's triggers, and Slack's, are in the
-### per-app .http files above.
+### 🔧 Example trigger — subscribe (Gmail new_email). Rest of Gmail's triggers (new_labeled_email,
+### new_sent_email, new_starred_email, new_draft): test_components/gmail/gmail.http.
 #### composio ->>> POST /trigger_instances/{slug}/upsert { connected_account_id | user_id, trigger_config:
 #### {interval, ...} } — per-trigger interval, NOT global. Event DELIVERY is a separate step: POST
 #### /webhook_subscriptions { webhook_url, enabled_events[] }, one URL for the whole project, decoupled
@@ -327,7 +378,8 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "extra_metadata": { "note": "created from tool_provider.http" }
 }
 
 ### Copy the returned trigger_instance_id here to unsubscribe below
@@ -338,6 +390,54 @@ Content-Type: application/json
 #### composio ->>> DELETE /trigger_instances/manage/{triggerId}
 ### ----------------------------------------------------
 DELETE {{base_url}}/triggers/{{gmail_new_email_trigger_id}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Example trigger — subscribe (Slack new_message, scoped to #test-user via `config.channel_id` — the
+### per-instance input props every Slack trigger but channel_created accepts, see types.ts's
+### TriggerDefinition.config). Omit `config` entirely for an unscoped subscription (fires for every
+### channel). Needs Slack's Events API to actually POST to /webhooks/slack/events.
+###
+### >>> This file only keeps ONE example per app, as a quick smoke test (see the header comment at the top
+### >>> of this file). To exercise every Gmail/Slack action, every trigger (incl. the other 7 Slack triggers
+### >>> — message_edited, message_deleted, reaction_added, reaction_removed, user_joined_channel,
+### >>> channel_created, file_shared — and channel+thread_ts config scoping), open the full per-app files instead:
+### >>>   test_components/gmail/gmail.http
+### >>>   test_components/slack/slack.http
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/new_message/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "C0772SYKNN4" },
+  "extra_metadata": { "note": "created from tool_provider.http" }
+}
+
+### Copy the returned trigger_instance_id here to unsubscribe below
+@slack_new_message_trigger_id = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Check ONE instance's poll/delivery logs — `with_payload=true` (default) inlines the exact envelope
+### delivered ({id, type, metadata, data, timestamp}) per row, no second GET /triggers/logs/{id} call
+### needed; `limit` defaults to 20. Both are plain query params, pass them on the fly. Full walkthrough
+### (with_payload=false example, poll-vs-delivery row distinction): test_components/gmail/gmail.http and
+### test_components/slack/slack.http.
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances/{{slack_new_message_trigger_id}}/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check MY most recent trigger fires — same as above but across EVERY trigger this user has
+### subscribed to, not just this one instance. Same with_payload/limit defaults. Optional &app=slack.
+### ----------------------------------------------------
+GET {{base_url}}/triggers/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+###
+DELETE {{base_url}}/triggers/{{slack_new_message_trigger_id}}
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------

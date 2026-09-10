@@ -44,6 +44,10 @@ export const triggerInstances = pgTable("trigger_instances", {
   // src/core/scheduler.ts's isDue().
   poll_interval_ms: integer("poll_interval_ms"),
   cursor: jsonb("cursor"), // per-app shaped (GmailHistoryCursor vs a Slack shape), jsonb is the only sane column type
+  // Per-instance input props set at subscribe time (e.g. Slack's { channel } / { channel, thread_ts }) —
+  // null for an unscoped subscription or a trigger with no TriggerDefinition.config declared. Same
+  // "opaque per-app-shaped jsonb" reasoning as `cursor` above — see types.ts's TriggerInstance.config.
+  config: jsonb("config"),
   // Opaque client space (e.g. { notes: "..." }) — same idea as connections.extra_metadata, but editable
   // after creation via PATCH /triggers/:id. See types.ts's TriggerInstance.extra_metadata TODO(ask) on the
   // size cap enforced at the route boundary (not here — this column has no DB-level constraint).

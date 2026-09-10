@@ -111,7 +111,7 @@ export interface ActionDefinition<Input = unknown, Output = unknown> {
 
 export type TriggerMode = "poll" | "webhook";
 
-export interface TriggerDefinition<Cursor = unknown, Event = unknown> {
+export interface TriggerDefinition<Cursor = unknown, Event = unknown, Config = unknown> {
   key: string; // e.g. "new_email"
   description: string;
   mode: TriggerMode;
@@ -134,6 +134,23 @@ export interface TriggerDefinition<Cursor = unknown, Event = unknown> {
   // file. Optional and z.any() is a valid value for a trigger that hasn't had its schema tightened up yet —
   // this is a "declare it when you know it" field, not a required one.
   payload?: z.ZodType<Event>;
+  // Optional per-instance INPUT — what the subscriber configures at subscribe time to scope which events
+  // this specific instance receives, e.g. Slack's `{ channel: "C0772SYKNN4" }` to only fire for one
+  // channel, or `{ channel, thread_ts }` to scope to one thread. Same idea as Composio's real
+  // `trigger_config` on POST /trigger_instances/{slug}/upsert (see trigger_routes.ts's header comment) and
+  // Pipedream's per-source configurable props — and the same CONTRACT as ActionDefinition's input/output
+  // below: a real zod schema, not documentation-only. When declared, POST /triggers/:app/:trigger/subscribe
+  // (trigger_routes.ts) validates the caller's `config` body field against it (400 on a bad shape) and
+  // persists the parsed result on TriggerInstance.config. Omit this (and matchesConfig below) for a
+  // trigger with nothing instance-scopable — e.g. Slack's channel_created, which fires for a channel that
+  // doesn't exist yet until the event itself.
+  config?: z.ZodType<Config>;
+  // Only relevant when `config` is declared. Given the RAW provider payload (same value handleWebhook
+  // receives) and one instance's stored, already-parsed config, decides whether THAT instance should
+  // receive this event. Lets the app-specific webhook dispatcher (e.g.
+  // src/components/slack/webhooks/events.ts) stay provider-shape-agnostic: it just calls this once per
+  // candidate instance instead of hardcoding "compare event.channel to config.channel" itself.
+  matchesConfig?: (rawPayload: unknown, config: Config) => boolean;
 }
 
 export interface AppDefinition {
@@ -152,7 +169,18 @@ export interface AppDefinition {
   // The registry only ever iterates/looks-up by key, never calls .run()/.poll() generically, so `any` here
   // costs nothing real — each components/*/actions/*.ts file still keeps its own real Input/Output types.
   actions: ActionDefinition<any, any>[];
-  triggers: TriggerDefinition<any, any>[];
+  triggers: TriggerDefinition<any, any, any>[];
+  // Inbound webhook receivers this app owns, keyed by the last path segment of
+  // POST /webhooks/:app/:hook (src/api/webhook_routes.ts) — e.g. `{ events: handleSlackEventsWebhook }`
+  // for POST /webhooks/slack/events. webhook_routes.ts is a pure dispatcher: it looks up
+  // `app.webhooks?.[hook]` and hands the handler the raw Request, unparsed — it has NO per-provider
+  // knowledge (no Slack signature verification, no Slack event shapes, nothing), so every provider-specific
+  // concern (signature/HMAC verification, a provider's own handshake step, mapping a raw payload to a
+  // TriggerDefinition.key, fan-out to TriggerInstances via src/core/scheduler.ts's deliverEvent) lives in
+  // the app's own src/components/<app>/webhooks/<hook>.ts, not here. Optional — an app with no real-time
+  // (webhook-mode) triggers, or one whose triggers are poll-mode only (Gmail today), doesn't need this at
+  // all; POST /webhooks/:app/:hook 404s cleanly for any (app, hook) pair with nothing registered.
+  webhooks?: Record<string, (req: Request) => Promise<Response>>;
 }
 
 // --- Admin-facing records (Phase 3+, but declared now since /admin reads them) ---
@@ -172,6 +200,16 @@ export interface TriggerInstance {
   // docs/research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section for why that's a
   // deliberate simplification, not an oversight, at our current scale).
   webhook_url: string;
+  // Set once at subscribe time from the request body's `config` field, parsed against the trigger's own
+  // TriggerDefinition.config zod schema — null if the trigger declares no config, or the caller didn't
+  // pass one for a trigger that does (an unscoped subscription: fires for every event of that
+  // trigger_key). Per-app-shaped like `cursor` below, opaque here — only the owning trigger's
+  // matchesConfig() (this file's TriggerDefinition) ever interprets it. E.g. Slack's new_message:
+  // `{ channel: "C0772SYKNN4" }` to scope to one channel, or `{ channel, thread_ts }` to scope to one
+  // thread within it. This is the per-instance INPUT PROPS concept (Composio's trigger_config /
+  // Pipedream's configurable source props), distinct from `payload` above (TriggerDefinition's declared
+  // OUTPUT shape delivered to webhook_url).
+  config: unknown;
   // Resolved once at subscribe time — the trigger's own defaultPollIntervalMs, or an explicit override
   // from the subscribe request (src/api/trigger_routes.ts). Only meaningful for mode: "poll" triggers;
   // webhook-mode triggers (Slack) never poll at all, so this is unused for them. src/core/scheduler.ts

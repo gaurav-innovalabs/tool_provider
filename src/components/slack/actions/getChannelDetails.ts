@@ -3,9 +3,11 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().describe("Channel id, e.g. from list_channels"),
+  // conversations.info requires the real channel ID — Slack does NOT resolve a "#name" here.
+  channel_id: z.string().describe("Channel ID, e.g. from list_channels — NOT a #channel-name"),
 });
 
 const output = z.object({
@@ -45,12 +47,12 @@ export const getChannelDetails: ActionDefinition<Input, Output> = {
       throw new Error(`Connection ${connection.connection_id} has no access_token in secrets (not active yet?)`);
     }
     const url = new URL("https://slack.com/api/conversations.info");
-    url.searchParams.set("channel", params.channel);
+    url.searchParams.set("channel", params.channel_id);
 
     const res = await fetch(url, { headers: { Authorization: `Bearer ${connection.secrets.access_token}` } });
     const data = (await res.json()) as SlackConversationsInfoResponse;
     if (!res.ok || !data.ok || !data.channel) {
-      throw new Error(`Slack get_channel_details failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack get_channel_details failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
     return {
       id: data.channel.id,

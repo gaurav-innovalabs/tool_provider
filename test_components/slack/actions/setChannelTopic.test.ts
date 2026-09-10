@@ -12,13 +12,13 @@ afterEach(() => {
 describe("setChannelTopic", () => {
   test("sets the topic", async () => {
     mockSlackFetch([{ body: { ok: true, topic: "new topic" } }]);
-    const result = await runAction(setChannelTopic, makeBotOnlyConnection(), { channel: "C1", topic: "new topic" });
+    const result = await runAction(setChannelTopic, makeBotOnlyConnection(), { channel_id: "C1", topic: "new topic" });
     expect(result).toEqual({ topic: "new topic" });
   });
 
   test("surfaces too_long", async () => {
     mockSlackFetch([{ body: { ok: false, error: "too_long" } }]);
-    await expect(runAction(setChannelTopic, makeBotOnlyConnection(), { channel: "C1", topic: "x" })).rejects.toThrow(
+    await expect(runAction(setChannelTopic, makeBotOnlyConnection(), { channel_id: "C1", topic: "x" })).rejects.toThrow(
       /too_long/,
     );
   });

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { connectionStore, triggerInstanceStore, triggerLogStore } from "../core/store";
 import { getApp, listApps } from "../core/registry";
 import { resendDelivery } from "../core/scheduler";
+import { errorResponse } from "../lib/errors";
 
 // No global poll interval — matches Pipedream (per-source `timer` prop, its own default) and Composio
 // (per-trigger `trigger_config.interval`), both verified from real source/docs. `poll_interval_ms` here
@@ -39,6 +40,11 @@ const subscribeBody = z.object({
   // Opaque client space — e.g. { notes: "..." }. Never read/interpreted by us. See types.ts's
   // TriggerInstance.extra_metadata and MAX_EXTRA_METADATA_BYTES above.
   extra_metadata: extraMetadataSchema,
+  // Per-instance INPUT PROPS — e.g. Slack's { channel: "C0772SYKNN4" } to scope new_message to one
+  // channel, or { channel, thread_ts } to scope to one thread. Shape is per-trigger (TriggerDefinition's
+  // own `config` zod schema, types.ts) — validated below against THAT schema, not here (z.unknown() here
+  // is deliberately permissive; the trigger-specific 400 happens once we know which trigger this is).
+  config: z.unknown().optional(),
 });
 
 const updateMetadataBody = z.object({
@@ -67,6 +73,11 @@ export const triggerRoutes = {
           // JSON Schema of the `data` object this trigger delivers to a subscriber's webhook_url — null
           // when the trigger hasn't declared one yet (TriggerDefinition.payload is optional).
           payload: t.payload ? z.toJSONSchema(t.payload) : null,
+          // JSON Schema of the per-instance INPUT PROPS this trigger accepts as `config` on
+          // POST /triggers/:app/:trigger/subscribe below (e.g. Slack's new_message: { channel?, thread_ts?
+          // } to scope to one channel/thread) — null for a trigger with nothing instance-scopable
+          // (TriggerDefinition.config is optional, same "declare it when you know it" contract as payload).
+          config: t.config ? z.toJSONSchema(t.config) : null,
         })),
       );
       return Response.json(triggers);
@@ -77,7 +88,12 @@ export const triggerRoutes = {
     POST: async (req: Request & { params: { app: string; trigger: string } }) => {
       try {
         const body = subscribeBody.parse(await req.json());
-        const app = getApp(req.params.app); // throws on unknown app — caught below as a 500; matches connection_routes.ts's existing TODO
+        let app: ReturnType<typeof getApp>;
+        try {
+          app = getApp(req.params.app);
+        } catch {
+          return Response.json({ error: `Unknown app: "${req.params.app}"` }, { status: 400 });
+        }
         const trigger = app.triggers.find((t) => t.key === req.params.trigger);
         if (!trigger) {
           return Response.json({ error: `Unknown trigger: ${req.params.app}.${req.params.trigger}` }, { status: 404 });
@@ -98,6 +114,20 @@ export const triggerRoutes = {
         // (Slack) never poll, so this stays null for them regardless of what was requested.
         const poll_interval_ms = trigger.mode === "poll" ? (body.poll_interval_ms ?? trigger.defaultPollIntervalMs ?? null) : null;
 
+        // Per-instance input props (e.g. Slack's { channel_id } / { channel_id, thread_ts } — types.ts's
+        // TriggerDefinition.config). Validated against THIS trigger's own schema, not subscribeBody's
+        // generic z.unknown() above — a 400 here names the actual trigger + the actual zod issue, same
+        // "validate at the boundary once we know the concrete shape" pattern action_routes.ts's
+        // action.input.parse() already follows. A trigger with no `config` declared (channel_created)
+        // simply ignores whatever `config` the caller sent — no filtering ever applies to it.
+        //
+        // `body.config ?? {}`, NOT bare `body.config`: every trigger's config schema is `z.object({...
+        // all-optional fields})` — an object schema, so parsing `undefined` (an unscoped subscribe that
+        // omits `config` entirely, the common case) fails with "expected object, received undefined" even
+        // though every field inside is optional. Defaulting the omitted case to `{}` is what actually makes
+        // "no config" mean "no scoping" as documented, instead of a 400 on the simplest possible call.
+        const config = trigger.config ? trigger.config.parse(body.config ?? {}) : null;
+
         const trigger_instance_id = `ti_${crypto.randomUUID()}`;
         const now = new Date().toISOString();
         await triggerInstanceStore.create({
@@ -110,15 +140,15 @@ export const triggerRoutes = {
           webhook_url: body.webhook_url,
           poll_interval_ms,
           cursor: null, // seeded on the scheduler's first poll of this instance, not here — see each trigger's poll() "if (!cursor)" branch
+          config,
           extra_metadata: body.extra_metadata ?? {},
           created_at: now,
           updated_at: now,
         });
 
-        return Response.json({ trigger_instance_id, status: "active", poll_interval_ms }, { status: 201 });
+        return Response.json({ trigger_instance_id, status: "active", poll_interval_ms, config }, { status: 201 });
       } catch (err) {
-        const status = err instanceof z.ZodError ? 400 : 500;
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+        return errorResponse(err);
       }
     },
   },
@@ -157,8 +187,24 @@ export const triggerRoutes = {
       if (!instance || instance.user_id !== user_id) {
         return Response.json({ error: `Unknown trigger instance: ${req.params.id}` }, { status: 404 });
       }
-      const limit = Number(url.searchParams.get("limit") ?? "50");
-      const logs = await triggerLogStore.listByInstance(req.params.id, limit);
+      // Defaults changed from (no with_payload at all, limit 50) to (with_payload=true, limit=20): the
+      // whole point of checking a trigger's logs is almost always "what did my webhook actually receive"
+      // — forcing a second GET /triggers/logs/{log_id} round-trip per row just to see that was the wrong
+      // default. `with_payload=false` still exists for the rare case of skimming many rows' status/error
+      // without the (sometimes large) payload bodies. Poll-attempt rows have no payload regardless of this
+      // flag (see GmailHistoryCursor-style trigger comment on TriggerLogEntry — only webhook DELIVERY rows
+      // ever capture one), so `payload` is simply absent there either way, not an error.
+      //
+      // `include_empty_polls` (default false): a poll-mode trigger (Gmail) logs ONE row every time it
+      // runs, even when it finds nothing new — status "success", no error, no payload. Those rows are
+      // real proof the scheduler is alive, but they're pure noise in a log LISTING (a caller checking logs
+      // wants "what fired" or "what broke", not a scroll of quiet checks) — filtered out by default, at
+      // the database query itself so `limit` still returns up to N genuinely relevant rows. Pass
+      // include_empty_polls=true to see them (e.g. to confirm the scheduler is actually ticking).
+      const limit = Number(url.searchParams.get("limit") ?? "20");
+      const withPayload = url.searchParams.get("with_payload") !== "false";
+      const includeEmptyPolls = url.searchParams.get("include_empty_polls") === "true";
+      const logs = await triggerLogStore.listByInstance(req.params.id, limit, includeEmptyPolls);
       return Response.json({
         trigger_instance: { trigger_instance_id: instance.trigger_instance_id, status: instance.status, webhook_url: instance.webhook_url },
         logs: logs.map((l) => ({
@@ -170,6 +216,54 @@ export const triggerRoutes = {
           // `resendable` spares the caller from having to know "presence of payload is the signal" —
           // POST /triggers/logs/{id}/resend will 400 on a log_id where this is false.
           resendable: l.payload !== undefined,
+          // Explicit, self-documenting version of the same signal — true for a real delivery (something
+          // actually fired and was sent), false for a poll attempt that found nothing new this cycle.
+          data_found: !triggerLogStore.isEmptyPollAttempt(l),
+          // Consistent companion to data_found: was this event actually SENT to webhook_url or not. False
+          // for a quiet poll-attempt row (data_found already false, nothing to send) AND for a real event
+          // whose delivery POST failed (data_found true, status "error") — only true for a confirmed
+          // delivery. Same info as status/error, flattened to one boolean callers can filter/read directly.
+          data_sendable: triggerLogStore.isDataSendable(l),
+          ...(withPayload ? { payload: l.payload } : {}),
+        })),
+      });
+    },
+  },
+
+  // Client-facing "everything that's fired recently, across EVERY trigger I've subscribed to" — the thing
+  // GET /triggers/instances/:id/logs above can't answer without already knowing which specific
+  // trigger_instance_id to check. Same shape/defaults as that route (with_payload=true, limit=20) but not
+  // scoped to one instance — each row carries its own trigger_instance_id/app/trigger_key so you can tell
+  // which subscription it came from. Optional &app=slack narrows to one app's triggers, same filter shape
+  // GET /connections and GET /triggers/instances already use.
+  "/triggers/logs": {
+    GET: async (req: Request) => {
+      const url = new URL(req.url);
+      const user_id = url.searchParams.get("user_id");
+      if (!user_id) {
+        return Response.json({ error: "user_id query param is required" }, { status: 400 });
+      }
+      const app = url.searchParams.get("app") ?? undefined;
+      const limit = Number(url.searchParams.get("limit") ?? "20");
+      const withPayload = url.searchParams.get("with_payload") !== "false";
+      // Same "hide quiet poll-attempt rows by default" fix as GET /triggers/instances/:id/logs — see that
+      // route's fuller comment. include_empty_polls=true to see them.
+      const includeEmptyPolls = url.searchParams.get("include_empty_polls") === "true";
+      const logs = await triggerLogStore.listByUser(user_id, app, limit, includeEmptyPolls);
+      return Response.json({
+        logs: logs.map((l) => ({
+          log_id: l.log_id,
+          trigger_instance_id: l.trigger_instance_id,
+          app: l.app,
+          trigger_key: l.trigger_key,
+          status: l.status,
+          ran_at: l.ran_at,
+          error: l.error,
+          webhook_url: l.webhook_url,
+          resendable: l.payload !== undefined,
+          data_found: !triggerLogStore.isEmptyPollAttempt(l),
+          data_sendable: triggerLogStore.isDataSendable(l),
+          ...(withPayload ? { payload: l.payload } : {}),
         })),
       });
     },
@@ -202,6 +296,8 @@ export const triggerRoutes = {
         webhook_url: log.webhook_url,
         payload: log.payload,
         resendable: log.payload !== undefined,
+        data_found: !triggerLogStore.isEmptyPollAttempt(log),
+        data_sendable: triggerLogStore.isDataSendable(log),
       });
     },
   },
@@ -229,8 +325,7 @@ export const triggerRoutes = {
         const resent = await resendDelivery(instance, log.payload);
         return Response.json({ log_id: resent.log_id, status: resent.status, ran_at: resent.ran_at, webhook_url: resent.webhook_url, error: resent.error }, { status: 201 });
       } catch (err) {
-        const status = err instanceof z.ZodError ? 400 : 500;
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+        return errorResponse(err);
       }
     },
   },
@@ -259,8 +354,7 @@ export const triggerRoutes = {
         await triggerInstanceStore.update(req.params.id, { extra_metadata: body.extra_metadata, updated_at: new Date().toISOString() });
         return Response.json({ trigger_instance_id: req.params.id, extra_metadata: body.extra_metadata });
       } catch (err) {
-        const status = err instanceof z.ZodError ? 400 : 500;
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+        return errorResponse(err);
       }
     },
   },

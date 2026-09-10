@@ -3,9 +3,11 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1),
+  // conversations.archive requires the real channel ID — Slack does NOT resolve a "#name" here.
+  channel_id: z.string().min(1).describe("Channel ID, e.g. from list_channels — NOT a #channel-name"),
 });
 
 const output = z.object({ ok: z.boolean() });
@@ -34,12 +36,12 @@ export const archiveChannel: ActionDefinition<Input, Output> = {
         Authorization: `Bearer ${connection.secrets!.access_token}`,
         "Content-Type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel: params.channel }),
+      body: JSON.stringify({ channel: params.channel_id }),
     });
 
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack archive_channel failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack archive_channel failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { ok: true };

@@ -8,11 +8,11 @@
 ### POST {{base_url}}/webhooks/slack/events, registered as the Request URL in Slack's own app config
 ### (Events API). No polling, unlike Gmail.
 
-@base_url = http://localhost:3005
+@base_url = https://gnq2twjw-3005.inc1.devtunnels.ms
 
 ### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
 ### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
-@access_token = REPLACE_ME_ACCESS_TOKEN
+@access_token = 3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1
 @admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
 
 ### ----------------------------------------------------
@@ -27,7 +27,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned user_id into this variable
-@user_id = usr_REPLACE_ME
+@user_id = usr_bf9d74a9-c070-48ec-b3ad-bf18f0b24b67
 
 ### ----------------------------------------------------
 ### 🔧 Connect Slack (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth.
@@ -40,7 +40,10 @@ Content-Type: application/json
 
 {
   "user_id": "{{user_id}}",
-  "app": "slack"
+  "app": "slack",
+  "extra_metadata": {
+      "note": "created from tool_provider.http"
+    }
 }
 
 ### Copy the returned connection_id here once the OAuth flow above completes
@@ -50,6 +53,25 @@ Content-Type: application/json
 ### 🔧 Check the connection's status — should be "active" once OAuth completes
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{slack_connection_id}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check all connections — every Slack connection this user has (not just the one above; useful if
+### you've reconnected more than once, e.g. after a revoke/expire). Optional &app=slack narrows to just
+### this app (omit it to see every app this user has connected, Gmail/SerpApi included).
+### ----------------------------------------------------
+GET {{base_url}}/connections?user_id={{user_id}}&app=slack
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Remove a connection — real revoke, not cosmetic: flips status -> "revoked" and clears `secrets`
+### (the stored access_token/user_access_token are gone, not just hidden). `user_id` query param required
+### and checked against the connection's own owner (404, not 403, on a mismatch — doesn't reveal whether
+### the connection_id exists at all to a non-owner). Doesn't delete the row itself — action_logs/
+### trigger_instances still FK to it, so history stays intact. To reconnect after this, just run the
+### connect flow again from the top of this file (POST /connections { "app": "slack", ... }).
+### ----------------------------------------------------
+DELETE {{base_url}}/connections/{{slack_connection_id}}?user_id={{user_id}}
 Authorization: Bearer {{access_token}}
 
 # ============================================================================
@@ -65,12 +87,16 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "#general", "text": "Hello from slack.http" }
+  "input": { "channel": "#test-user", "text": "Hello from slack.http" }
 }
 
-### Copy a channel + ts here to test update/delete/reactions below (post_message's response)
-@slack_channel = C_REPLACE_ME
-@slack_message_ts = 0000000000.000000
+### Copy a channel + ts here to test update/delete/reactions below — the ID FROM POST_MESSAGE'S RESPONSE,
+### not the "#name" you passed as input above. chat.postMessage (post_message) tolerates and resolves a
+### "#channel-name"; chat.update/chat.delete/reactions.add/reactions.remove (everything below) do NOT do
+### that resolution and reject a name with channel_not_found — they need the real channel ID (e.g.
+### "C0772SYKNN4" for #test-user).
+@slack_channel = C0772SYKNN4
+@slack_message_ts = 1789028689.945889
 
 ### ----------------------------------------------------
 ### 🔧 post_message — as_user:true (posts using the authorizing human's own token, not the bot)
@@ -85,7 +111,9 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 update_message — edit a previously posted message (as_user must match how it was originally sent)
+### 🔧 update_message — edit a previously posted message (as_user must match how it was originally sent).
+### `channel_id` — chat.update requires the real ID, unlike post_message's `channel` above (which accepts
+### and resolves a "#name"); passing a name here fails with channel_not_found.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_UPDATE_MESSAGE
 Authorization: Bearer {{access_token}}
@@ -93,11 +121,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "text": "Edited via slack.http" }
+  "input": { "channel_id": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "text": "Edited via slack.http 2" }
 }
 
 ### ----------------------------------------------------
-### 🔧 delete_message — delete a message (as_user must match how it was originally sent)
+### 🔧 delete_message — delete a message (as_user must match how it was originally sent). `channel_id`,
+### same "real ID required, no #name" rule as update_message above.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_DELETE_MESSAGE
 Authorization: Bearer {{access_token}}
@@ -105,11 +134,11 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}" }
+  "input": { "channel_id": "{{slack_channel}}", "ts": "{{slack_message_ts}}" }
 }
 
 ### ----------------------------------------------------
-### 🔧 add_reaction — add an emoji reaction (name without colons)
+### 🔧 add_reaction — add an emoji reaction (name without colons). `channel_id`, same "real ID required" rule.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_ADD_REACTION
 Authorization: Bearer {{access_token}}
@@ -117,11 +146,11 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
+  "input": { "channel_id": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
 }
 
 ### ----------------------------------------------------
-### 🔧 remove_reaction — remove an emoji reaction
+### 🔧 remove_reaction — remove an emoji reaction. `channel_id`, same "real ID required" rule.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_REMOVE_REACTION
 Authorization: Bearer {{access_token}}
@@ -129,7 +158,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
+  "input": { "channel_id": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
 }
 
 ### ----------------------------------------------------
@@ -172,7 +201,8 @@ Content-Type: application/json
 @slack_new_channel = C_REPLACE_ME
 
 ### ----------------------------------------------------
-### 🔧 set_channel_topic — set a channel's topic
+### 🔧 set_channel_topic — set a channel's topic. `channel_id`, same "real ID required, no #name" rule as
+### update_message/delete_message above.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_SET_CHANNEL_TOPIC
 Authorization: Bearer {{access_token}}
@@ -180,11 +210,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_new_channel}}", "topic": "Set via slack.http" }
+  "input": { "channel_id": "{{slack_new_channel}}", "topic": "Set via slack.http" }
 }
 
 ### ----------------------------------------------------
-### 🔧 invite_user_to_channel — invite one or more users (Slack user ids)
+### 🔧 invite_user_to_channel — invite one or more users (Slack user ids). `channel_id`, same "real ID
+### required" rule.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_INVITE_USER_TO_CHANNEL
 Authorization: Bearer {{access_token}}
@@ -192,11 +223,11 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_new_channel}}", "users": ["U_REPLACE_ME"] }
+  "input": { "channel_id": "{{slack_new_channel}}", "users": ["U_REPLACE_ME"] }
 }
 
 ### ----------------------------------------------------
-### 🔧 archive_channel — archive a channel
+### 🔧 archive_channel — archive a channel. `channel_id`, same "real ID required" rule.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_ARCHIVE_CHANNEL
 Authorization: Bearer {{access_token}}
@@ -204,11 +235,42 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_new_channel}}" }
+  "input": { "channel_id": "{{slack_new_channel}}" }
 }
 
 ### ----------------------------------------------------
-### 🔧 list_users — list workspace members
+### 🔧 get_channel_details — check `is_member` here BEFORE subscribing a trigger scoped to (or reading
+### from) a channel — false means the bot can post there (chat:write.public) but Slack won't deliver ANY
+### events from it, with no error anywhere. Fix with join_channel right below if false.
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_GET_CHANNEL_DETAILS
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel_id": "C0772SYKNN4" }
+}
+
+### ----------------------------------------------------
+### 🔧 join_channel — join a PUBLIC channel. Needed for the bot to actually RECEIVE events (new_message,
+### reaction_added, etc.) from that channel — chat:write.public only covers POSTING there without joining,
+### a separate permission from receiving events. Needs channels:join bot scope (see .env.example). Check
+### GET_CHANNEL_DETAILS' `is_member` first if a subscribed trigger never fires with no error anywhere.
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_JOIN_CHANNEL
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel_id": "C0772SYKNN4" }
+}
+
+### ----------------------------------------------------
+### 🔧 list_users — list workspace members, INCLUDING deactivated ones — check each entry's `deleted` field
+### (Slack's actual "active or not" flag; there's no separate `is_active`, `!deleted` IS active) plus
+### is_admin/is_owner/is_restricted/is_ultra_restricted (guest), email, tz, avatar_url.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_LIST_USERS
 Authorization: Bearer {{access_token}}
@@ -220,7 +282,8 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 find_user_by_email — look up a user by email
+### 🔧 find_user_by_email — look up a user by email. Same richer shape as list_users/get_user_details now
+### (deleted, is_admin, is_owner, is_restricted, is_ultra_restricted, tz, avatar_url) — not just id/name.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_FIND_USER_BY_EMAIL
 Authorization: Bearer {{access_token}}
@@ -232,7 +295,8 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 upload_file — upload a small text file (base64-encoded bytes)
+### 🔧 upload_file — upload a small text file (base64-encoded bytes). `channel_id`, same "real ID required"
+### rule — files.completeUploadExternal's own wire param is even literally called channel_id by Slack.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_UPLOAD_FILE
 Authorization: Bearer {{access_token}}
@@ -240,7 +304,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "channel": "{{slack_channel}}", "filename": "test.txt", "content_base64": "SGVsbG8gZnJvbSBzbGFjay5odHRw", "title": "Test upload" }
+  "input": { "channel_id": "{{slack_channel}}", "filename": "test.txt", "content_base64": "SGVsbG8gZnJvbSBzbGFjay5odHRw", "title": "Test upload" }
 }
 
 ### ----------------------------------------------------
@@ -252,24 +316,31 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "query": "hello from:@me", "sort": "timestamp", "count": 20 }
+  "input": { "query": "Hello from", "sort": "timestamp", "count": 20 }
 }
 
 # ============================================================================
-# TRIGGER (1) — webhook mode, no polling. GET {{base_url}}/triggers lists it live from the registry.
+# TRIGGERS (8) — all webhook mode, no polling, all delivered off the ONE Events API subscription URL
+# ({{base_url}}/webhooks/slack/events — Slack app config -> Event Subscriptions -> Request URL). GET
+# {{base_url}}/triggers lists all 8 live from the registry: new_message, message_edited, message_deleted,
+# reaction_added, reaction_removed, user_joined_channel, channel_created, file_shared. See
+# src/components/slack/app.ts's `webhooks` block for the full request-flow write-up (generic
+# /webhooks/:app/:hook dispatcher -> app.webhooks[hook] -> src/components/slack/webhooks/events.ts).
 # ============================================================================
 
 ### ----------------------------------------------------
-### 🔧 List available Slack triggers
+### 🔧 List available Slack triggers — each entry's `config` field is the JSON Schema of the per-instance
+### input props that trigger accepts below (null for channel_created, which has nothing to scope by).
 ### ----------------------------------------------------
 GET {{base_url}}/triggers
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 Subscribe — new_message (fires for any message in any channel the app can see; no per-channel filter yet)
+### 🔧 Subscribe — new_message, UNSCOPED (fires for every message in every channel the app can see).
 ### webhook_url below is where WE deliver parsed events to; separately, Slack's own Events API must be
 ### configured (in Slack's app config) to POST to {{base_url}}/webhooks/slack/events for events to arrive
-### here in the first place.
+### here in the first place — see .env.example's SLACK_SIGNING_SECRET comment for the exact click-path +
+### which bot events to subscribe to.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/slack/new_message/subscribe
 Authorization: Bearer {{access_token}}
@@ -277,11 +348,236 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/32a6c8e9-bf53-4968-9f47-1c063946d47d",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 ### Copy the returned trigger_instance_id to unsubscribe below
-@slack_new_message_ti = ti_REPLACE_ME
+@slack_new_message_ti = ti_c0af1c02-8f03-4ef6-9af8-da6114a476ec
+
+### ----------------------------------------------------
+### 🔧 Check MY trigger subscriptions — every instance this user has, across every app (not just Slack) —
+### distinct from GET /triggers above (available trigger TYPES, not what's actually subscribed). Client-
+### facing (checked against the caller's own user_id, not admin-only) — GET /admin/triggers further below
+### is the separate "every instance, every user" view. Optional &app=slack narrows to just this app.
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances?user_id={{user_id}}&app=slack
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check MY most recent trigger fires — across EVERY trigger I've subscribed to, not just one
+### trigger_instance_id (that's the per-instance logs example right below this one). Each row carries its
+### own trigger_instance_id/app/trigger_key so you can tell which subscription it came from. Same
+### with_payload=true/limit=20 defaults as the per-instance version. Optional &app=slack narrows to one app.
+### ----------------------------------------------------
+GET {{base_url}}/triggers/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+###
+GET {{base_url}}/triggers/logs?user_id={{user_id}}&app=slack&with_payload=false&limit=5
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check ONE instance's delivery/poll logs — Stripe-CLI-`events list`-style history: every attempt to
+### fire this specific subscription (webhook-mode Slack triggers only ever have delivery attempts, no poll
+### attempts — those are Gmail-only, see test_components/gmail/gmail.http). `status` per row is success or
+### error; `resendable` says whether POST /triggers/logs/{log_id}/resend will work on it (only delivery
+### rows with a captured payload are resendable, not poll-attempt rows). Empty `logs` here just means this
+### instance hasn't fired yet — post a real message/reaction/etc. in Slack to make it fire, then re-check.
+###
+### Defaults: `with_payload=true` (the exact envelope delivered — {id, type, metadata, data, timestamp} —
+### is inlined on every delivery row, no second GET /triggers/logs/{log_id} call needed per row) and
+### `limit=20`. Both are plain query params, pass them on the fly, no other endpoint needed:
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances/{{slack_new_message_ti}}/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+### Same call, but skip the (sometimes large) payload bodies — just status/error/webhook_url per row
+GET {{base_url}}/triggers/instances/{{slack_new_message_ti}}/logs?user_id={{user_id}}&with_payload=false&limit=5
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Unsubscribe — new_message. Real delete (not a soft-revoke like connections) — run the two checks
+### above BEFORE this if you still want to inspect this instance.
+### ----------------------------------------------------
+DELETE {{base_url}}/triggers/{{slack_new_message_ti}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_message, SCOPED TO ONE CHANNEL (#test-user, C0772SYKNN4). `config.channel_id` is this
+### trigger's per-instance INPUT PROPS (same concept as Composio's trigger_config / Pipedream's
+### per-source configurable props — see types.ts's TriggerDefinition.config) — every other subscription to
+### this same trigger key is unaffected; each trigger_instance_id has its own independent config.
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/new_message/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/32a6c8e9-bf53-4968-9f47-1c063946d47d",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### Copy the returned trigger_instance_id to unsubscribe below
+@slack_new_message_channel_ti = ti_a49df946-dfbf-47f8-b524-8f75d71d9436
+
+###
+GET {{base_url}}/triggers/instances/{{slack_new_message_channel_ti}}/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+###
+DELETE {{base_url}}/triggers/{{slack_new_message_channel_ti}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_message, SCOPED TO ONE THREAD. `config.thread_ts` is the parent message's own `ts`
+### (get one from GET_CHANNEL_HISTORY/find_messages, or the `ts` a prior new_message event delivered) —
+### pass both `channel` and `thread_ts` together to scope to one thread within one channel; only replies
+### within that exact thread fire. Same shape applies to message_edited/message_deleted below.
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/new_message/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}", "thread_ts": "1234567890.123456" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### Copy the returned trigger_instance_id to unsubscribe below
+@slack_new_message_thread_ti = ti_REPLACE_ME
+
+###
+DELETE {{base_url}}/triggers/{{slack_new_message_thread_ti}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — message_edited, scoped to one channel (same config shape as new_message: channel + optional thread_ts)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/message_edited/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — message_deleted, scoped to one channel (same config shape as new_message)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/message_deleted/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — reaction_added, scoped to one channel. NO thread_ts here — Slack's reaction_added event
+### only carries the reacted-to message's own `ts` (item.ts), not its parent thread_ts if it's itself a
+### thread reply, so per-thread reaction scoping isn't derivable without an extra conversations.replies
+### lookup (see reactionAdded.ts's TODO — not implemented, config.channel_id only for now).
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/reaction_added/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — reaction_removed, scoped to one channel (same config shape as reaction_added)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/reaction_removed/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — user_joined_channel, scoped to one channel
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/user_joined_channel/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — channel_created. NOT scopable at all — no `config` accepted (GET /triggers above shows
+### `config: null` for it) since the channel this event reports doesn't exist until the event fires. Always
+### workspace-wide.
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/channel_created/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Subscribe — file_shared, scoped to one channel. Needs the files:read bot EVENT scope (distinct from
+### files:write, which upload_file the ACTION uses) — see .env.example. Slack's file_shared event only
+### carries IDs (file_id/channel_id/user_id), not the filename/title — call files.info with file_id if you
+### need those (no files.info action exists in this app yet).
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/file_shared/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": "{{slack_channel}}" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+### ----------------------------------------------------
+### 🔧 Bad config shape — 400s with a real zod issue naming the trigger, not a silent no-op (channel_id must
+### be a string; trigger_routes.ts validates `config` against THIS trigger's own schema once it knows
+### which trigger this is, not against a generic z.unknown() at the body-parse stage). Note this is a
+### DIFFERENT failure mode than passing a well-typed but wrong value (e.g. a "#name" instead of a real
+### ID) — that's still a valid string, so it parses fine here and just silently never matches any event
+### instead (matchesConfig does a plain equality check, no Slack API call to reject it with an error).
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/new_message/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "config": { "channel_id": 12345 },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
 
 ### ----------------------------------------------------
 ### 🔧 Slack's own Events API delivery endpoint — this is what Slack calls, not something a client calls
@@ -295,12 +591,6 @@ Content-Type: application/json
   "type": "url_verification",
   "challenge": "test-challenge-token"
 }
-
-### ----------------------------------------------------
-### 🔧 Unsubscribe — delete the trigger instance created above
-### ----------------------------------------------------
-DELETE {{base_url}}/triggers/{{slack_new_message_ti}}
-Authorization: Bearer {{access_token}}
 
 # ============================================================================
 # ADMIN — read-only inspection, filter by app in the response yourself (no per-app query param)

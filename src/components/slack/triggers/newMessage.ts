@@ -17,6 +17,7 @@ export interface NewMessageEvent {
   user: string;
   text: string;
   ts: string;
+  thread_ts?: string; // present when this message is a reply within a thread
 }
 
 const newMessagePayload: z.ZodType<NewMessageEvent> = z.object({
@@ -24,6 +25,7 @@ const newMessagePayload: z.ZodType<NewMessageEvent> = z.object({
   user: z.string(),
   text: z.string(),
   ts: z.string(),
+  thread_ts: z.string().optional(),
 });
 
 // Raw shape of a Slack `message` event, per https://api.slack.com/events/message — only the fields we
@@ -35,19 +37,39 @@ export interface SlackMessageEventPayload {
   user?: string;
   text?: string;
   ts: string;
+  thread_ts?: string; // set by Slack when this message is a reply within a thread
   bot_id?: string;
 }
+
+export interface NewMessageConfig {
+  channel_id?: string; // scope to one real channel ID, e.g. "C0772SYKNN4" (from list_channels) — NOT a
+  // "#name": matchesConfig below only does a plain equality check against Slack's raw event.channel (always
+  // an ID), so a name here would just silently never match, no error, unlike an action's channel_id
+  // rejecting a bad value with a real Slack API error.
+  thread_ts?: string; // scope to one thread within that channel (a message's own `ts` once it has replies)
+}
+
+const newMessageConfig: z.ZodType<NewMessageConfig> = z.object({
+  channel_id: z.string().optional(),
+  thread_ts: z.string().optional(),
+});
 
 // `unknown`, not `never`, for the Cursor type param — this trigger doesn't use a cursor (webhook mode),
 // but `never` there trips the same any/unknown variance issue types.ts's AppDefinition.triggers TODO
 // already documents for actions.
-export const newMessage: TriggerDefinition<unknown, NewMessageEvent> = {
+export const newMessage: TriggerDefinition<unknown, NewMessageEvent, NewMessageConfig> = {
   key: "new_message",
-  description: "Fires when a new message is posted in a channel the connected app can see.",
+  description:
+    "Fires when a new message is posted in a channel the connected app can see. Pass config.channel_id to scope to one channel, and/or config.thread_ts to scope to one thread within it — omit both to fire for every channel.",
   mode: "webhook",
   payload: newMessagePayload,
-  // TODO(ask): still open — does a trigger *instance* need a specific channel_id at subscribe-time, or
-  // does this fire for all channels the app is in? Currently: all channels (no per-instance filter yet).
+  config: newMessageConfig,
+  matchesConfig(rawPayload, config) {
+    const event = rawPayload as SlackMessageEventPayload;
+    if (config.channel_id && event.channel !== config.channel_id) return false;
+    if (config.thread_ts && event.thread_ts !== config.thread_ts) return false;
+    return true;
+  },
   async handleWebhook(_connection, rawPayload) {
     const event = rawPayload as SlackMessageEventPayload;
     return [
@@ -56,6 +78,7 @@ export const newMessage: TriggerDefinition<unknown, NewMessageEvent> = {
         user: event.user ?? "",
         text: event.text ?? "",
         ts: event.ts,
+        thread_ts: event.thread_ts,
       },
     ];
   },

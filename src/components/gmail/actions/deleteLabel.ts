@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   label_id: z.string().min(1),
@@ -28,7 +29,7 @@ export const deleteLabel: ActionDefinition<Input, Output> = {
     });
     // Gmail returns 204 No Content on success — no JSON body to parse.
     if (!res.ok) {
-      throw new Error(`Gmail delete_label failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail delete_label failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
     return { deleted: true as const };

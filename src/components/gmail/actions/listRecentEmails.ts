@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   max_results: z.number().int().min(1).max(50).default(10),
@@ -51,7 +52,7 @@ export const listRecentEmails: ActionDefinition<Input, Output> = {
 
     const listRes = await fetch(listUrl, { headers: authHeaders });
     if (!listRes.ok) {
-      throw new Error(`Gmail list_recent_emails failed (${listRes.status}): ${await listRes.text()}`);
+      throw new Error(`Gmail list_recent_emails failed (${listRes.status}): ${await describeGoogleApiError(listRes)}`);
     }
     const { messages = [] } = (await listRes.json()) as GmailMessageListResponse;
 
@@ -65,7 +66,7 @@ export const listRecentEmails: ActionDefinition<Input, Output> = {
         url.searchParams.append("metadataHeaders", "Subject");
         const res = await fetch(url, { headers: authHeaders });
         if (!res.ok) {
-          throw new Error(`Gmail message fetch failed for ${m.id} (${res.status}): ${await res.text()}`);
+          throw new Error(`Gmail message fetch failed for ${m.id} (${res.status}): ${await describeGoogleApiError(res)}`);
         }
         return (await res.json()) as GmailMessageGetResponse;
       }),

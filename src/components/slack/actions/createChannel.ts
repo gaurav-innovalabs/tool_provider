@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
   name: z.string().min(1), // lowercase, no spaces — Slack normalizes/validates server-side
@@ -47,7 +48,7 @@ export const createChannel: ActionDefinition<Input, Output> = {
 
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok || !data.channel) {
-      throw new Error(`Slack create_channel failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack create_channel failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { id: data.channel.id, name: data.channel.name };

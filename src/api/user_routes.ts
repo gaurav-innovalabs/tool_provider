@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import { userStore } from "../core/store";
+import { errorResponse } from "../lib/errors";
 
 const requestBody = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -22,8 +23,7 @@ export const userRoutes = {
         });
         return Response.json({ user_id }, { status: 201 });
       } catch (err) {
-        const status = err instanceof z.ZodError ? 400 : 500;
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+        return errorResponse(err);
       }
     },
   },

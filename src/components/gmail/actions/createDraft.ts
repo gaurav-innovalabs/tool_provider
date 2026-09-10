@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
   to: z.string().email(),
@@ -58,7 +59,7 @@ export const createDraft: ActionDefinition<Input, Output> = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail create_draft failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail create_draft failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
     const data = (await res.json()) as GmailDraftCreateResponse;

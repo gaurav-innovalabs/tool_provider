@@ -4,9 +4,11 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().describe("Channel id the thread lives in"),
+  // conversations.replies requires the real channel ID — Slack does NOT resolve a "#name" here.
+  channel_id: z.string().describe("Channel ID the thread lives in — NOT a #channel-name"),
   thread_ts: z.string().describe("The parent message's ts — from get_channel_history, find_messages, or post_message's result"),
   limit: z.number().int().min(1).max(200).default(50),
 });
@@ -38,14 +40,14 @@ export const getThreadReplies: ActionDefinition<Input, Output> = {
       throw new Error(`Connection ${connection.connection_id} has no access_token in secrets (not active yet?)`);
     }
     const url = new URL("https://slack.com/api/conversations.replies");
-    url.searchParams.set("channel", params.channel);
+    url.searchParams.set("channel", params.channel_id);
     url.searchParams.set("ts", params.thread_ts);
     url.searchParams.set("limit", String(params.limit));
 
     const res = await fetch(url, { headers: { Authorization: `Bearer ${connection.secrets.access_token}` } });
     const data = (await res.json()) as SlackConversationsRepliesResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack get_thread_replies failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack get_thread_replies failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
     return (data.messages ?? []).map((m) => ({ ts: m.ts, user: m.user, text: m.text ?? "" }));
   },

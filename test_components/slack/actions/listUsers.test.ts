@@ -10,14 +10,15 @@ afterEach(() => {
 });
 
 describe("listUsers", () => {
-  test("maps members to the declared output shape", async () => {
+  test("maps members to the declared output shape, including deleted/deactivated members", async () => {
     mockSlackFetch([
       {
         body: {
           ok: true,
           members: [
-            { id: "U1", name: "alice", real_name: "Alice A", is_bot: false },
-            { id: "U2", name: "botty", is_bot: true },
+            { id: "U1", name: "alice", real_name: "Alice A", deleted: false, is_bot: false, is_admin: true, profile: { email: "alice@example.com", image_192: "https://x/alice.png" } },
+            { id: "U2", name: "botty", deleted: false, is_bot: true },
+            { id: "U3", name: "old.employee", real_name: "Old Employee", deleted: true, is_bot: false },
           ],
         },
       },
@@ -26,8 +27,48 @@ describe("listUsers", () => {
     const result = await runAction(listUsers, makeBotOnlyConnection(), {});
 
     expect(result).toEqual([
-      { id: "U1", name: "alice", real_name: "Alice A", is_bot: false },
-      { id: "U2", name: "botty", real_name: undefined, is_bot: true },
+      {
+        id: "U1",
+        name: "alice",
+        real_name: "Alice A",
+        email: "alice@example.com",
+        deleted: false,
+        is_bot: false,
+        is_admin: true,
+        is_owner: undefined,
+        is_restricted: undefined,
+        is_ultra_restricted: undefined,
+        tz: undefined,
+        avatar_url: "https://x/alice.png",
+      },
+      {
+        id: "U2",
+        name: "botty",
+        real_name: undefined,
+        email: undefined,
+        deleted: false,
+        is_bot: true,
+        is_admin: undefined,
+        is_owner: undefined,
+        is_restricted: undefined,
+        is_ultra_restricted: undefined,
+        tz: undefined,
+        avatar_url: undefined,
+      },
+      {
+        id: "U3",
+        name: "old.employee",
+        real_name: "Old Employee",
+        email: undefined,
+        deleted: true,
+        is_bot: false,
+        is_admin: undefined,
+        is_owner: undefined,
+        is_restricted: undefined,
+        is_ultra_restricted: undefined,
+        tz: undefined,
+        avatar_url: undefined,
+      },
     ]);
   });
 

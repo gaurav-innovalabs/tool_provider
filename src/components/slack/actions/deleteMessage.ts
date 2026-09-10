@@ -3,9 +3,12 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1),
+  // chat.delete requires the real channel ID Slack's own post_message response returned — unlike
+  // post_message's `channel` input, Slack does NOT resolve a "#name" here (channel_not_found).
+  channel_id: z.string().min(1).describe("Channel ID, e.g. from post_message's own response — NOT a #channel-name"),
   ts: z.string().min(1),
   // Must match how the message was originally sent, same reasoning as update_message.
   as_user: z.boolean().default(false),
@@ -47,12 +50,12 @@ export const deleteMessage: ActionDefinition<Input, Output> = {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel: params.channel, ts: params.ts }),
+      body: JSON.stringify({ channel: params.channel_id, ts: params.ts }),
     });
 
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack delete_message failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack delete_message failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { ts: data.ts!, channel: data.channel! };

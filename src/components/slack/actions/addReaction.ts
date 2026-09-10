@@ -5,9 +5,12 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1),
+  // reactions.add requires the real channel ID (e.g. "C0772SYKNN4") — unlike post_message's `channel`,
+  // Slack does NOT resolve a "#name" here; passing one fails with channel_not_found.
+  channel_id: z.string().min(1).describe("Channel ID, e.g. from list_channels — NOT a #channel-name"),
   ts: z.string().min(1),
   name: z.string().min(1), // emoji name without colons, e.g. "thumbsup"
 });
@@ -38,12 +41,12 @@ export const addReaction: ActionDefinition<Input, Output> = {
         Authorization: `Bearer ${connection.secrets!.access_token}`,
         "Content-Type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel: params.channel, timestamp: params.ts, name: params.name }),
+      body: JSON.stringify({ channel: params.channel_id, timestamp: params.ts, name: params.name }),
     });
 
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack add_reaction failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack add_reaction failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { ok: true };

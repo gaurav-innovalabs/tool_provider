@@ -12,6 +12,7 @@ import { mcpLoginFormPage, mcpLoginSuccessPage, connectionsStatusPage, errorPage
 import { handleMcpHttpRequest } from "../mcp/httpServer";
 import { getApp, listApps } from "../core/registry";
 import { manageConnection, listConnections, disconnectConnection } from "../mcp/metaTools";
+import { formatError } from "../lib/errors";
 
 const loginBody = z.object({
   access_key: z.string(),
@@ -69,7 +70,11 @@ export const mcpRoutes = {
         const token = await createMcpLoginToken({ user_id, apps });
         return mcpLoginSuccessPage({ mcpUrl: `${config.BASE_URL}/mcp`, token, userId: user_id, reused });
       } catch (err) {
-        return errorPage(err instanceof Error ? err.message : String(err));
+        // Same "a 500-shaped failure must never be silent" fix as every *_routes.ts JSON error path
+        // (see src/lib/errors.ts's errorResponse) — this one renders an HTML page instead of JSON, so it
+        // can't reuse that helper directly, but it still needs the same server-side log.
+        console.error("[mcp] request failed:", err);
+        return errorPage(formatError(err));
       }
     },
   },
@@ -123,7 +128,11 @@ export const mcpRoutes = {
           result.status === "pending" && result.connect_url ? result.connect_url : `${config.BASE_URL}/mcp/connections?token=${encodeURIComponent(token)}`;
         return Response.redirect(destination, 302);
       } catch (err) {
-        return errorPage(err instanceof Error ? err.message : String(err));
+        // Same "a 500-shaped failure must never be silent" fix as every *_routes.ts JSON error path
+        // (see src/lib/errors.ts's errorResponse) — this one renders an HTML page instead of JSON, so it
+        // can't reuse that helper directly, but it still needs the same server-side log.
+        console.error("[mcp] request failed:", err);
+        return errorPage(formatError(err));
       }
     },
   },
@@ -139,7 +148,11 @@ export const mcpRoutes = {
       try {
         await disconnectConnection(payload.user_id, { connection_id: req.params.id }, payload.apps);
       } catch (err) {
-        return errorPage(err instanceof Error ? err.message : String(err));
+        // Same "a 500-shaped failure must never be silent" fix as every *_routes.ts JSON error path
+        // (see src/lib/errors.ts's errorResponse) — this one renders an HTML page instead of JSON, so it
+        // can't reuse that helper directly, but it still needs the same server-side log.
+        console.error("[mcp] request failed:", err);
+        return errorPage(formatError(err));
       }
       return Response.redirect(`${config.BASE_URL}/mcp/connections?token=${encodeURIComponent(token)}`, 302);
     },

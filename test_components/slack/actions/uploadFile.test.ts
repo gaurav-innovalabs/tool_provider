@@ -19,7 +19,7 @@ describe("uploadFile", () => {
     ]);
 
     const result = await runAction(uploadFile, makeBotOnlyConnection(), {
-      channel: "C1",
+      channel_id: "C1",
       filename: "hello.txt",
       content_base64: Buffer.from("hello world").toString("base64"),
     });
@@ -41,7 +41,7 @@ describe("uploadFile", () => {
     ]);
 
     await runAction(uploadFile, makeBotOnlyConnection(), {
-      channel: "C1",
+      channel_id: "C1",
       filename: "hello.txt",
       content_base64: Buffer.from("hi").toString("base64"),
       title: "Custom title",
@@ -52,7 +52,7 @@ describe("uploadFile", () => {
     const { calls } = mockSlackFetch([{ body: { ok: false, error: "invalid_auth" } }]);
 
     await expect(
-      runAction(uploadFile, makeBotOnlyConnection(), { channel: "C1", filename: "x.txt", content_base64: "aGk=" }),
+      runAction(uploadFile, makeBotOnlyConnection(), { channel_id: "C1", filename: "x.txt", content_base64: "aGk=" }),
     ).rejects.toThrow(/invalid_auth/);
     expect(calls.length).toBe(1);
   });
@@ -65,7 +65,7 @@ describe("uploadFile", () => {
     ]);
 
     await expect(
-      runAction(uploadFile, makeBotOnlyConnection(), { channel: "C1", filename: "x.txt", content_base64: "aGk=" }),
+      runAction(uploadFile, makeBotOnlyConnection(), { channel_id: "C1", filename: "x.txt", content_base64: "aGk=" }),
     ).rejects.toThrow(/invalid_files/);
   });
 });

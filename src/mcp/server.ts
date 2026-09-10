@@ -19,6 +19,7 @@ import {
   subscribeTrigger,
   listTriggerInstances,
   listTriggerLogs,
+  listRecentTriggerLogs,
   getTriggerLog,
   resendTriggerWebhook,
   type AppScope,
@@ -45,6 +46,8 @@ import {
   listTriggerInstancesOutput,
   listTriggerLogsInput,
   listTriggerLogsOutput,
+  listRecentTriggerLogsInput,
+  listRecentTriggerLogsOutput,
   getTriggerLogInput,
   getTriggerLogOutput,
   resendTriggerWebhookInput,
@@ -183,6 +186,16 @@ export function buildMcpServer(userId: string, scope: AppScope = null): McpServe
       outputSchema: listTriggerLogsOutput,
     },
     (input) => toolResult(listTriggerLogs(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "list_recent_trigger_logs",
+    {
+      description: "List everything that's fired recently across EVERY trigger the current user has subscribed to — not scoped to one instance like list_trigger_logs (which requires a trigger_instance_id). Use this for 'what happened recently' without already knowing which instance to check. Optional app filter.",
+      inputSchema: listRecentTriggerLogsInput.shape,
+      outputSchema: listRecentTriggerLogsOutput,
+    },
+    (input) => toolResult(listRecentTriggerLogs(userId, input, scope)),
   );
 
   server.registerTool(

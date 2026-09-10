@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({});
 
@@ -32,7 +33,7 @@ export const listLabels: ActionDefinition<Input, Output> = {
       headers: { Authorization: `Bearer ${connection.secrets!.access_token}` },
     });
     if (!res.ok) {
-      throw new Error(`Gmail list_labels failed (${res.status}): ${await res.text()}`);
+      throw new Error(`Gmail list_labels failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
     const { labels = [] } = (await res.json()) as GmailLabelsListResponse;

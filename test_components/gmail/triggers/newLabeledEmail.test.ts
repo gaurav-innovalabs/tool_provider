@@ -16,7 +16,7 @@ describe("newLabeledEmail", () => {
     expect(result).toEqual({ events: [], nextCursor: { historyId: "1000" } });
   });
 
-  test("returns one event per message with any label(s) newly added, for ALL labels (no per-instance filter)", async () => {
+  test("returns one event per message with any label(s) newly added, for ALL labels (no per-instance filter), enriched with the message's own from/to/subject/snippet/received_at", async () => {
     mockGmailFetch([
       {
         body: {
@@ -27,14 +27,63 @@ describe("newLabeledEmail", () => {
           ],
         },
       },
+      {
+        body: {
+          id: "m1",
+          snippet: "hi one",
+          internalDate: "1700000000000",
+          payload: { headers: [{ name: "From", value: "a@b.com" }, { name: "To", value: "me@x.com" }, { name: "Subject", value: "One" }] },
+        },
+      },
+      {
+        body: {
+          id: "m2",
+          snippet: "hi two",
+          internalDate: "1700000000001",
+          payload: { headers: [{ name: "From", value: "c@d.com" }, { name: "To", value: "me@x.com" }, { name: "Subject", value: "Two" }] },
+        },
+      },
     ]);
 
     const result = await runPoll(newLabeledEmail, makeGmailConnection(), { historyId: "1000" });
 
     expect(result.events).toEqual([
-      { message_id: "m1", label_ids_added: ["Label_1"] },
-      { message_id: "m2", label_ids_added: ["STARRED", "IMPORTANT"] },
+      {
+        message_id: "m1",
+        label_ids_added: ["Label_1"],
+        from: "a@b.com",
+        to: "me@x.com",
+        subject: "One",
+        snippet: "hi one",
+        received_at: new Date(1700000000000).toISOString(),
+      },
+      {
+        message_id: "m2",
+        label_ids_added: ["STARRED", "IMPORTANT"],
+        from: "c@d.com",
+        to: "me@x.com",
+        subject: "Two",
+        snippet: "hi two",
+        received_at: new Date(1700000000001).toISOString(),
+      },
     ]);
+  });
+
+  test("skips a message that 404s instead of aborting the whole poll (cursor still advances)", async () => {
+    mockGmailFetch([
+      {
+        body: {
+          historyId: "1020",
+          history: [{ labelsAdded: [{ message: { id: "m-gone" }, labelIds: ["STARRED"] }] }],
+        },
+      },
+      { status: 404, body: { error: { code: 404, message: "Requested entity was not found." } } },
+    ]);
+
+    const result = await runPoll(newLabeledEmail, makeGmailConnection(), { historyId: "1000" });
+
+    expect(result.events).toEqual([]);
+    expect(result.nextCursor).toEqual({ historyId: "1020" });
   });
 
   test("reseeds on a 404 (historyId fell out of retention)", async () => {

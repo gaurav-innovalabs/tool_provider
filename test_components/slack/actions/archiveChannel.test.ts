@@ -12,12 +12,12 @@ afterEach(() => {
 describe("archiveChannel", () => {
   test("archives a channel", async () => {
     mockSlackFetch([{ body: { ok: true } }]);
-    const result = await runAction(archiveChannel, makeBotOnlyConnection(), { channel: "C1" });
+    const result = await runAction(archiveChannel, makeBotOnlyConnection(), { channel_id: "C1" });
     expect(result).toEqual({ ok: true });
   });
 
   test("surfaces already_archived", async () => {
     mockSlackFetch([{ body: { ok: false, error: "already_archived" } }]);
-    await expect(runAction(archiveChannel, makeBotOnlyConnection(), { channel: "C1" })).rejects.toThrow(/already_archived/);
+    await expect(runAction(archiveChannel, makeBotOnlyConnection(), { channel_id: "C1" })).rejects.toThrow(/already_archived/);
   });
 });

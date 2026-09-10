@@ -30,7 +30,8 @@ describe("newSentEmail", () => {
           id: "m1",
           labelIds: ["SENT"],
           snippet: "sent one",
-          payload: { headers: [{ name: "To", value: "x@y.com" }, { name: "Subject", value: "Out" }] },
+          internalDate: "1700000000000",
+          payload: { headers: [{ name: "From", value: "me@y.com" }, { name: "To", value: "x@y.com" }, { name: "Subject", value: "Out" }] },
         },
       },
       {
@@ -38,14 +39,17 @@ describe("newSentEmail", () => {
           id: "m2",
           labelIds: ["INBOX"],
           snippet: "inbound one",
-          payload: { headers: [{ name: "To", value: "me@y.com" }, { name: "Subject", value: "In" }] },
+          internalDate: "1700000000001",
+          payload: { headers: [{ name: "From", value: "them@y.com" }, { name: "To", value: "me@y.com" }, { name: "Subject", value: "In" }] },
         },
       },
     ]);
 
     const result = await runPoll(newSentEmail, makeGmailConnection(), { historyId: "1000" });
 
-    expect(result.events).toEqual([{ message_id: "m1", to: "x@y.com", subject: "Out", snippet: "sent one" }]);
+    expect(result.events).toEqual([
+      { message_id: "m1", from: "me@y.com", to: "x@y.com", subject: "Out", snippet: "sent one", sent_at: new Date(1700000000000).toISOString() },
+    ]);
     expect(result.nextCursor).toEqual({ historyId: "1010" });
   });
 });

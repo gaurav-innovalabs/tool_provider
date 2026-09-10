@@ -11,7 +11,7 @@
 
 ### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
 ### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
-@access_token = REPLACE_ME_ACCESS_TOKEN
+@access_token = 3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1
 @admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
 
 # ============================================================================
@@ -51,7 +51,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned user_id into this variable
-@user_id = usr_acd99107-e6f4-4d2b-b1c2-f44df5a05183
+@user_id = usr_9f735860-470a-4496-bcee-1d51047f7093
 
 ### ----------------------------------------------------
 ### 🔧 Connect Gmail (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth
@@ -62,16 +62,34 @@ Content-Type: application/json
 
 {
   "user_id": "{{user_id}}",
-  "app": "gmail"
+  "app": "gmail",
+  "extra_metadata": { "note": "created from test_components/gmail/gmail.http" }
 }
 
 ### Copy the returned connection_id here once the OAuth flow above completes
-@gmail_connection_id = conn_22009865-aa52-4caf-ad6e-6fb16858d2ca
+@gmail_connection_id = conn_96d506ee-e637-4b95-b305-26989d2fff0e
 
 ### ----------------------------------------------------
 ### 🔧 Check the connection's status — should be "active" once OAuth completes
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{gmail_connection_id}}
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check all connections — every Gmail connection this user has. Optional &app=gmail narrows to just
+### this app (omit it to see every app this user has connected, Slack/SerpApi included).
+### ----------------------------------------------------
+GET {{base_url}}/connections?user_id={{user_id}}&app=gmail
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Remove a connection — real revoke, not cosmetic: flips status -> "revoked" and clears `secrets` (the
+### stored access_token/refresh_token are gone, not just hidden). `user_id` query param required and
+### checked against the connection's own owner. Doesn't delete the row itself — action_logs/
+### trigger_instances still FK to it, so history stays intact. To reconnect after this, just run the
+### connect flow again from the top of this file (POST /connections { "app": "gmail", ... }).
+### ----------------------------------------------------
+DELETE {{base_url}}/connections/{{gmail_connection_id}}?user_id={{user_id}}
 Authorization: Bearer {{access_token}}
 
 # ============================================================================
@@ -180,7 +198,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "input": { "to": "someone@example.com", "subject": "Draft from gmail.http", "body": "Not sent yet." }
+  "input": { "to": "GauravRewaliya@yahoo.com", "subject": "Draft from gmail.http", "body": "Not sent yet." }
 }
 
 # ============================================================================
@@ -203,11 +221,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 ### Copy the returned trigger_instance_id to unsubscribe below
-@gmail_new_email_ti = ti_REPLACE_ME
+@gmail_new_email_ti = ti_5598d8ca-a06b-4f6b-8ce7-50dbc14a9982
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_labeled_email (fires when a label is applied to a message; ALL labels, no per-instance filter yet)
@@ -218,10 +237,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
-@gmail_new_labeled_email_ti = ti_REPLACE_ME
+### 
+@gmail_new_labeled_email_ti = ti_4336fc00-9b22-424c-bcf6-c2fed42e4cdd
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_sent_email (fires when an email is sent; watches messageAdded + filters the SENT label)
@@ -232,7 +253,8 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 @gmail_new_sent_email_ti = ti_REPLACE_ME
@@ -246,10 +268,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
-@gmail_new_starred_email_ti = ti_REPLACE_ME
+### 
+@gmail_new_starred_email_ti = ti_e4e38bc1-1492-4ae5-8714-e88fcdd388f5
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_draft (fires when a draft is created; watches messageAdded + filters the DRAFT label)
@@ -260,14 +284,18 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
+  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
-@gmail_new_draft_ti = ti_REPLACE_ME
+### 
 
-### Note: new_email_matching_search is NOT implemented — it needs a per-instance search query, and the
-### subscribe body above has no generic per-instance config field yet (see src/components/TODO.md and
-### src/components/gmail/app.ts's trigger-registration comment).
+@gmail_new_draft_ti = ti_d0acf602-78a6-44fa-bafb-7b643239ce26
+
+### Note: new_email_matching_search is NOT implemented — TriggerDefinition.config (types.ts) is the generic
+### per-instance input-props mechanism that would carry its search query (Slack's channel/thread_ts-scoped
+### triggers already use it — see test_components/slack/slack.http), but no Gmail trigger declares a
+### `config` schema yet, so subscribing to any Gmail trigger here always fires unscoped (every message).
 
 ### ----------------------------------------------------
 ### 🔧 Unsubscribe — delete any of the trigger instances created above
@@ -290,3 +318,37 @@ Authorization: Bearer {{admin_access_token}}
 ### 🔧 Admin — action/trigger call log
 GET {{base_url}}/admin/logs?limit=20
 Authorization: Bearer {{admin_access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check MY trigger subscriptions — every Gmail instance this user has (see test_components/slack/
+### slack.http for the same check on Slack instances).
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances?user_id={{user_id}}&app=gmail
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check MY most recent trigger fires — across EVERY Gmail trigger I've subscribed to (new_email,
+### new_draft, new_labeled_email, new_starred_email, new_sent_email all in one call), not just one
+### trigger_instance_id. Each row carries its own trigger_instance_id/trigger_key. Same with_payload=true/
+### limit=20 defaults as the per-instance version below.
+### ----------------------------------------------------
+GET {{base_url}}/triggers/logs?user_id={{user_id}}&app=gmail
+Authorization: Bearer {{access_token}}
+
+### ----------------------------------------------------
+### 🔧 Check ONE instance's poll/delivery logs — status per row is success or error; on a Gmail trigger
+### specifically you'll see BOTH kinds of rows, unlike Slack's webhook-only triggers: poll-ATTEMPT rows
+### (the scheduler checked Gmail, whether or not anything new was found — never has a payload) and
+### delivery rows (an event actually fired and got POSTed to webhook_url — always has a payload).
+###
+### Defaults: `with_payload=true` (the exact envelope delivered — {id, type, metadata, data, timestamp} —
+### is inlined on every delivery row, no second GET /triggers/logs/{log_id} call needed per row; poll-
+### attempt rows simply have no `payload` key either way, not an error) and `limit=20`. Both are plain
+### query params, pass them on the fly, no other endpoint needed:
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances/ti_8c5522f2-4033-4f8e-afd5-4315ddc46937/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+
+### Same call, but skip the (sometimes large) payload bodies — just status/error/webhook_url per row
+GET {{base_url}}/triggers/instances/ti_8c5522f2-4033-4f8e-afd5-4315ddc46937/logs?user_id={{user_id}}&with_payload=false&limit=5
+Authorization: Bearer {{access_token}}

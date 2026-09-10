@@ -372,15 +372,22 @@ export const openApiSpec = {
       get: {
         tags: ["triggers"],
         summary: "What a trigger instance has actually fired (~ Stripe CLI's `events list`)",
-        description: "Every poll attempt and webhook delivery attempt for one instance, newest first — status, which webhook_url each attempt went to, the error if any, and `resendable` (whether POST /triggers/logs/{log_id}/resend will work on it). `user_id` required and checked against the instance's own owner.",
+        description: "Every poll attempt and webhook delivery attempt for one instance, newest first — status, which webhook_url each attempt went to, the error if any, `resendable` (whether POST /triggers/logs/{log_id}/resend will work on it), and (by default) the full delivered `payload` inline — no second GET /triggers/logs/{log_id} round-trip needed per row just to see what a webhook actually received. Poll-attempt rows (not deliveries) never have a payload regardless of `with_payload`, that's expected, not an error. `user_id` required and checked against the instance's own owner.",
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" },
           { name: "user_id", in: "query", required: true, schema: { type: "string" } },
-          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 50 } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
+          {
+            name: "with_payload",
+            in: "query",
+            required: false,
+            schema: { type: "boolean", default: true },
+            description: "Include each row's full delivered payload inline. Set to false to skim many rows' status/error without the (sometimes large) payload bodies.",
+          },
         ],
         responses: {
           "200": {
-            description: "The instance's current status/webhook_url, plus its run history.",
+            description: "The instance's current status/webhook_url, plus its run history (payload inlined per row unless with_payload=false).",
             content: {
               "application/json": {
                 schema: {
@@ -395,6 +402,36 @@ export const openApiSpec = {
           },
           "400": { description: "Missing user_id." },
           "404": { description: "Unknown trigger instance, or it doesn't belong to user_id." },
+        },
+      },
+    },
+    "/triggers/logs": {
+      get: {
+        tags: ["triggers"],
+        summary: "Everything that's fired recently, across EVERY trigger this user has subscribed to",
+        description: "Same shape/defaults as GET /triggers/instances/{id}/logs (with_payload=true, limit=20) but not scoped to one trigger_instance_id — each row carries its own trigger_instance_id/app/trigger_key so you can tell which subscription it came from. Use this when you want 'what happened recently' without already knowing which specific instance to check. `user_id` required; optional `app` narrows to one app's triggers.",
+        parameters: [
+          { name: "user_id", in: "query", required: true, schema: { type: "string" } },
+          { name: "app", in: "query", required: false, schema: { type: "string" }, description: "Narrow to one app's triggers, e.g. gmail." },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 20 } },
+          {
+            name: "with_payload",
+            in: "query",
+            required: false,
+            schema: { type: "boolean", default: true },
+            description: "Include each row's full delivered payload inline. Set to false to skim many rows' status/error without the (sometimes large) payload bodies.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "This user's recent trigger runs across every instance, newest first.",
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { logs: { type: "array", items: { $ref: "#/components/schemas/TriggerLogEntry" } } } },
+              },
+            },
+          },
+          "400": { description: "Missing user_id." },
         },
       },
     },
@@ -460,6 +497,7 @@ export const openApiSpec = {
                   connection_id: { type: "string", description: "Must be an active connection to this `app`." },
                   webhook_url: { type: "string", format: "uri", description: "Where we POST each event once this trigger fires." },
                   poll_interval_ms: { type: "integer", description: "Override the trigger's own default. Poll-mode only; ignored for webhook-mode triggers." },
+                  config: { type: "object", additionalProperties: true, description: "Per-instance INPUT PROPS scoping which events this specific instance receives — e.g. Slack's { channel: \"C0772SYKNN4\" }, or { channel, thread_ts } to scope to one thread. Shape is per-trigger; see this trigger's own `config` JSON Schema from GET /triggers. Validated against that schema (400 on a bad shape). Omit for an unscoped subscription — fires for every event of this trigger key. Some triggers (Slack's channel_created) accept no config at all." },
                   extra_metadata: { type: "object", additionalProperties: true, description: "Opaque client space, e.g. { notes: '...' } — never read/interpreted by us, editable later via PATCH /triggers/{id}. Capped at 4096 bytes of JSON (see src/api/trigger_routes.ts's MAX_EXTRA_METADATA_BYTES)." },
                 },
                 required: ["connection_id", "webhook_url"],
@@ -525,26 +563,29 @@ export const openApiSpec = {
         },
       },
     },
-    "/webhooks/{app}/events": {
+    "/webhooks/{app}/{hook}": {
       post: {
         tags: ["webhooks"],
-        summary: "[Internal use] Provider event push (Events API)",
+        summary: "[Internal use] Provider event push — generic dispatcher, one route for every app",
         description:
-          "One subscription URL per app — not per connection or per TriggerInstance. Register this exact URL as the Request URL in the provider's app config (for Slack: Event Subscriptions). Public, NOT gated by our bearer token — each provider verifies itself instead (Slack: x-slack-signature/x-slack-request-timestamp headers over the raw body, checked against SLACK_SIGNING_SECRET). Only `slack` is implemented today; other app slugs get 404. Gmail has no webhook receiver — its `new_email` family of triggers is poll-based only (src/core/scheduler.ts), not push.",
+          "One subscription URL per (app, hook) — not per connection or per TriggerInstance. `:hook` lets one app register more than one named receiver (Slack has just \"events\" today: POST /webhooks/slack/events). This route itself has ZERO per-provider knowledge — no signature verification, no event parsing — it only looks up AppDefinition.webhooks[hook] (src/components/{app}/app.ts) and hands that handler the raw Request; everything provider-specific (signature/HMAC verification, handshakes, mapping a payload to a TriggerDefinition.key, fan-out via src/core/scheduler.ts's deliverEvent) lives in src/components/{app}/webhooks/{hook}.ts. Public, NOT gated by our bearer token — each provider verifies itself instead (Slack: x-slack-signature/x-slack-request-timestamp headers over the raw body, checked against SLACK_SIGNING_SECRET). Only `slack`/`events` is implemented today; any other (app, hook) pair 404s. Gmail has no webhook receiver — its `new_email` family of triggers is poll-based only (src/core/scheduler.ts), not push.",
         security: [],
-        parameters: [{ name: "app", in: "path", required: true, schema: { type: "string", enum: ["slack"] } }],
+        parameters: [
+          { name: "app", in: "path", required: true, schema: { type: "string", enum: ["slack"] } },
+          { name: "hook", in: "path", required: true, schema: { type: "string", enum: ["events"] } },
+        ],
         requestBody: {
           required: true,
           content: {
             "application/json": {
-              schema: { type: "object", description: "Provider-specific event envelope — for Slack, the Events API payload (url_verification handshake or event_callback)." },
+              schema: { type: "object", description: "Provider-specific event envelope — for Slack's `events` hook, the Events API payload (url_verification handshake or event_callback)." },
             },
           },
         },
         responses: {
           "200": { description: "Slack url_verification handshake echoes `{ challenge }`; anything else acked with plain text \"ok\" (Slack retries on non-2xx)." },
           "401": { description: "Invalid provider signature." },
-          "404": { description: "No webhook receiver for this app slug." },
+          "404": { description: "Unknown app, or no webhook receiver registered for this (app, hook) pair." },
           "500": { description: "Signature verification misconfigured (missing signing secret)." },
         },
       },
@@ -717,6 +758,7 @@ export const openApiSpec = {
           status: { type: "string", enum: ["active", "paused", "error"] },
           webhook_url: { type: "string", format: "uri" },
           poll_interval_ms: { type: "integer", nullable: true },
+          config: { type: "object", nullable: true, additionalProperties: true, description: "Per-instance input props set at subscribe time (e.g. Slack's { channel } / { channel, thread_ts }) — null for an unscoped subscription or a trigger with no `config` schema declared." },
           extra_metadata: { type: "object", additionalProperties: true, description: "Opaque client space — see PATCH /triggers/{id}." },
           created_at: { type: "string", format: "date-time" },
           updated_at: { type: "string", format: "date-time" },
@@ -732,6 +774,7 @@ export const openApiSpec = {
           mode: { type: "string", enum: ["poll", "webhook"] },
           default_poll_interval_ms: { type: "integer", nullable: true },
           payload: { type: "object", nullable: true, description: "JSON Schema of the `data` object delivered to webhook_url, or null if not yet declared." },
+          config: { type: "object", nullable: true, description: "JSON Schema of the per-instance INPUT PROPS this trigger accepts as `config` on subscribe (e.g. Slack's { channel?, thread_ts? }), or null for a trigger with nothing instance-scopable." },
         },
       },
       TriggerLogEntry: {

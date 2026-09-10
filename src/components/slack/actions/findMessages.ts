@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
   // Free-form Slack search query — e.g. `hello from:@alice after:2026-01-01 has:link`.
@@ -84,7 +85,7 @@ export const findMessages: ActionDefinition<Input, Output> = {
 
     const data = (await res.json()) as SlackSearchMessagesResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack find_messages failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack find_messages failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return (data.messages?.matches ?? []).map((m) => ({

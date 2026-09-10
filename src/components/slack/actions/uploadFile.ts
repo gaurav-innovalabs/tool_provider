@@ -10,9 +10,13 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1),
+  // files.completeUploadExternal's own wire param IS literally `channel_id` (unlike every other Slack
+  // method here, which calls it `channel` on the wire but still means an ID) — requires the real channel
+  // ID either way, Slack does NOT resolve a "#name" here.
+  channel_id: z.string().min(1).describe("Channel ID, e.g. from list_channels — NOT a #channel-name"),
   filename: z.string().min(1),
   content_base64: z.string().min(1), // file bytes, base64-encoded
   title: z.string().optional(),
@@ -57,7 +61,7 @@ export const uploadFile: ActionDefinition<Input, Output> = {
     });
     const urlData = (await urlRes.json()) as GetUploadUrlResponse;
     if (!urlRes.ok || !urlData.ok || !urlData.upload_url || !urlData.file_id) {
-      throw new Error(`Slack upload_file (files.getUploadURLExternal) failed: ${urlData.error ?? urlRes.statusText}`);
+      throw new Error(`Slack upload_file (files.getUploadURLExternal) failed: ${describeSlackError(urlData.error ?? urlRes.statusText)}`);
     }
 
     const putRes = await fetch(urlData.upload_url, { method: "POST", body: bytes });
@@ -73,12 +77,12 @@ export const uploadFile: ActionDefinition<Input, Output> = {
       },
       body: JSON.stringify({
         files: [{ id: urlData.file_id, title: params.title ?? params.filename }],
-        channel_id: params.channel,
+        channel_id: params.channel_id,
       }),
     });
     const completeData = (await completeRes.json()) as SlackApiResponse;
     if (!completeRes.ok || !completeData.ok) {
-      throw new Error(`Slack upload_file (files.completeUploadExternal) failed: ${completeData.error ?? completeRes.statusText}`);
+      throw new Error(`Slack upload_file (files.completeUploadExternal) failed: ${describeSlackError(completeData.error ?? completeRes.statusText)}`);
     }
 
     return { file_id: urlData.file_id };

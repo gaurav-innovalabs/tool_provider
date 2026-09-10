@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
   limit: z.number().int().min(1).max(200).default(50),
@@ -45,7 +46,7 @@ export const listChannels: ActionDefinition<Input, Output> = {
 
     const data = (await res.json()) as SlackConversationsListResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack list_channels failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack list_channels failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return (data.channels ?? []).map((c) => ({ id: c.id, name: c.name, is_member: c.is_member }));

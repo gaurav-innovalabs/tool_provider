@@ -4,9 +4,11 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1),
+  // conversations.invite requires the real channel ID — Slack does NOT resolve a "#name" here.
+  channel_id: z.string().min(1).describe("Channel ID, e.g. from list_channels — NOT a #channel-name"),
   users: z.array(z.string().min(1)).min(1), // Slack user ids
 });
 
@@ -40,12 +42,12 @@ export const inviteUserToChannel: ActionDefinition<Input, Output> = {
         Authorization: `Bearer ${connection.secrets!.access_token}`,
         "Content-Type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel: params.channel, users: params.users.join(",") }),
+      body: JSON.stringify({ channel: params.channel_id, users: params.users.join(",") }),
     });
 
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok || !data.channel) {
-      throw new Error(`Slack invite_user_to_channel failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack invite_user_to_channel failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { id: data.channel.id, name: data.channel.name };

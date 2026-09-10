@@ -29,6 +29,13 @@
       "when": 1789015748424,
       "tag": "0003_trigger_logs_webhook_url_payload",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789026884305,
+      "tag": "0004_safe_boomerang",
+      "breakpoints": true
     }
   ]
 }

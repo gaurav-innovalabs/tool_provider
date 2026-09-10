@@ -34,6 +34,7 @@
 import { triggerInstanceStore, connectionStore, triggerLogStore } from "./store";
 import { getApp } from "./registry";
 import { ensureFreshConnection } from "./tokenRefresh";
+import { formatError } from "../lib/errors";
 import type { TriggerInstance, TriggerLogEntry } from "../types";
 
 // How often this process checks whether anything is due — NOT a poll interval, just loop granularity.
@@ -95,10 +96,15 @@ export async function deliverEvent(instance: TriggerInstance, data: unknown): Pr
       status = "error";
       error = `HTTP ${res.status}`;
       console.error(`[scheduler] webhook delivery to ${instance.webhook_url} failed (${res.status}) for trigger_instance ${instance.trigger_instance_id}`);
+    } else {
+      // Success was previously silent — the only way to know a delivery actually landed was to query
+      // trigger_logs yourself. Logged now so "did my event actually go out" is answerable from the
+      // terminal alone, same as the failure path already was.
+      console.log(`[scheduler] webhook delivery to ${instance.webhook_url} succeeded for trigger_instance ${instance.trigger_instance_id} (${envelope.type})`);
     }
   } catch (err) {
     status = "error";
-    error = err instanceof Error ? err.message : String(err);
+    error = formatError(err);
     console.error(`[scheduler] webhook delivery to ${instance.webhook_url} threw for trigger_instance ${instance.trigger_instance_id}:`, err);
   }
 
@@ -144,7 +150,7 @@ export async function resendDelivery(instance: TriggerInstance, payload: unknown
     }
   } catch (err) {
     status = "error";
-    error = err instanceof Error ? err.message : String(err);
+    error = formatError(err);
   }
 
   const logEntry: TriggerLogEntry = {
@@ -183,6 +189,16 @@ async function logPollRun(instance: TriggerInstance, status: "success" | "error"
 export async function runTriggerPollCycle(): Promise<void> {
   const dueInstances = (await triggerInstanceStore.listActive()).filter(isDue);
 
+  // Previously this whole function logged NOTHING when every due instance polled cleanly and found zero
+  // new events — a completely silent, successful run looked identical from the console to the scheduler
+  // not running at all. Confirmed real: a manual run against real due instances updated their `updated_at`
+  // and wrote fresh "success" rows to trigger_logs, with zero console output the whole time. This one line
+  // is the fix — always prints, even (especially) when there was nothing else to say.
+  console.log(`[scheduler] poll cycle: ${dueInstances.length} instance(s) due${dueInstances.length ? ` (${dueInstances.map((i) => `${i.app}.${i.trigger_key}`).join(", ")})` : ""}`);
+  if (dueInstances.length === 0) return;
+
+  let totalEvents = 0;
+
   await Promise.all(
     dueInstances.map(async (instance) => {
       try {
@@ -206,6 +222,7 @@ export async function runTriggerPollCycle(): Promise<void> {
         connection = await ensureFreshConnection(app, connection);
 
         const { events, nextCursor } = await trigger.poll(connection, instance.cursor);
+        totalEvents += events.length;
 
         for (const event of events) {
           await deliverEvent(instance, event);
@@ -216,12 +233,20 @@ export async function runTriggerPollCycle(): Promise<void> {
           status: "active",
           updated_at: new Date().toISOString(),
         });
-        await logPollRun(instance, "success");
+        // Only log a standalone "poll ran" row when there's nothing else to say — when events were found,
+        // each one already wrote its own evt_ row above (deliverEvent), and THAT is the record of this
+        // cycle for this instance. Previously this fired unconditionally, so a cycle that found 3 events
+        // wrote 4 rows for one unit of work (1 quiet tlog_ "success" + 3 evt_ deliveries) — inconsistent
+        // with "log is one unit per thing that happened". A poll that finds nothing still needs its own
+        // row (that's the only proof-of-life for a quiet cycle — see the console.log above this function).
+        if (events.length === 0) {
+          await logPollRun(instance, "success");
+        }
       } catch (err) {
         // One trigger instance failing (e.g. a revoked token) must not take down the whole poll cycle —
         // mark just that instance as errored and move on; every other instance still gets its turn.
         console.error(`[scheduler] poll failed for trigger_instance ${instance.trigger_instance_id}:`, err);
-        await logPollRun(instance, "error", err instanceof Error ? err.message : String(err));
+        await logPollRun(instance, "error", formatError(err));
         await triggerInstanceStore.update(instance.trigger_instance_id, {
           status: "error",
           updated_at: new Date().toISOString(),
@@ -229,10 +254,29 @@ export async function runTriggerPollCycle(): Promise<void> {
       }
     }),
   );
+
+  console.log(`[scheduler] poll cycle done: ${totalEvents} new event(s) found across ${dueInstances.length} instance(s)`);
 }
 
+// `globalThis`, not a plain module-level `let` — `bun --hot worker.ts` re-executes this module's top-level
+// code (including worker.ts's own unconditional `startScheduler()` call) on every file change ANYWHERE in
+// its import graph, not just this file. A plain module-level variable gets reset right along with that
+// re-execution, so it can't detect "a previous interval is already running" across a reload — only
+// `globalThis` genuinely persists across module re-evaluation within the same process. Without this,
+// every hot-reload during dev silently stacks one more concurrent setInterval on top of all the previous
+// ones (found in production-shaped testing: 24 poll attempts in 8 minutes against an 8-minute
+// poll_interval_ms, instead of ~1) — each individually harmless-looking, but compounding fast under heavy
+// editing. Production (`bun worker.ts`, no --hot) never hits this: startScheduler() runs exactly once.
+const SCHEDULER_INTERVAL_KEY = Symbol.for("anox.scheduler.interval");
+
 export function startScheduler(): ReturnType<typeof setInterval> {
-  return setInterval(() => {
+  const g = globalThis as unknown as Record<symbol, ReturnType<typeof setInterval> | undefined>;
+  if (g[SCHEDULER_INTERVAL_KEY]) {
+    clearInterval(g[SCHEDULER_INTERVAL_KEY]);
+  }
+  const interval = setInterval(() => {
     runTriggerPollCycle().catch((err) => console.error("[scheduler] poll cycle threw:", err));
   }, SCHEDULER_TICK_MS);
+  g[SCHEDULER_INTERVAL_KEY] = interval;
+  return interval;
 }

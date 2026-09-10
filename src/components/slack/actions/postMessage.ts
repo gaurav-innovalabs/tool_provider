@@ -5,9 +5,15 @@
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
+import { describeSlackError } from "../../../lib/slackErrors";
 
 const input = z.object({
-  channel: z.string().min(1), // channel id or name
+  // Deliberately named `channel`, not `channel_id`, unlike update_message/delete_message/add_reaction/
+  // etc. below: chat.postMessage is the one Slack method here that actually RESOLVES a "#channel-name" for
+  // you server-side, on top of accepting a real ID. Every other Slack action in this app requires the real
+  // ID (the `channel` field chat.postMessage's own response returns) and rejects a name with
+  // channel_not_found — see e.g. update_message's channel_id field.
+  channel: z.string().min(1).describe("Channel ID (e.g. from list_channels) OR a #channel-name — this is the one Slack action that resolves a name for you"),
   text: z.string().min(1), // required even with blocks — Slack uses it as the notification/fallback text
   // Raw Slack Block Kit blocks — passed straight through, un-validated (Slack's own schema is huge and this
   // project isn't in the business of re-implementing it). z.unknown()'s array, not a typed block union.
@@ -79,7 +85,7 @@ export const postMessage: ActionDefinition<Input, Output> = {
     // not the status code. Must check both.
     const data = (await res.json()) as SlackApiResponse;
     if (!res.ok || !data.ok) {
-      throw new Error(`Slack post_message failed: ${data.error ?? res.statusText}`);
+      throw new Error(`Slack post_message failed: ${describeSlackError(data.error ?? res.statusText)}`);
     }
 
     return { ts: data.ts!, channel: data.channel! };
