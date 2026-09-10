@@ -22,6 +22,11 @@ import { listUsers } from "./actions/listUsers";
 import { findUserByEmail } from "./actions/findUserByEmail";
 import { uploadFile } from "./actions/uploadFile";
 import { findMessages } from "./actions/findMessages";
+import { getChannelHistory } from "./actions/getChannelHistory";
+import { getThreadReplies } from "./actions/getThreadReplies";
+import { getChannelDetails } from "./actions/getChannelDetails";
+import { getUserDetails } from "./actions/getUserDetails";
+import { getCurrentUser } from "./actions/getCurrentUser";
 import { newMessage } from "./triggers/newMessage";
 
 export const slackApp: AppDefinition = {
@@ -42,6 +47,9 @@ export const slackApp: AppDefinition = {
     // users:read        - list_users, find_user_by_email
     // users:read.email  - find_user_by_email (users.lookupByEmail needs the email-specific scope too)
     // files:write       - upload_file
+    // channels:history  - get_channel_history, get_thread_replies (conversations.history/.replies)
+    // get_channel_details (conversations.info), get_user_details (users.info), get_current_user (auth.test)
+    // need no new scope — channels:read/users:read already cover them, auth.test needs none at all.
     scopes: [
       "chat:write",
       "im:write",
@@ -51,6 +59,7 @@ export const slackApp: AppDefinition = {
       "users:read",
       "users:read.email",
       "files:write",
+      "channels:history",
     ],
     client_id: config.apps.slack.SLACK_CLIENT_ID,
     client_secret: config.apps.slack.SLACK_CLIENT_SECRET,
@@ -77,6 +86,11 @@ export const slackApp: AppDefinition = {
     findUserByEmail,
     uploadFile,
     findMessages,
+    getChannelHistory,
+    getThreadReplies,
+    getChannelDetails,
+    getUserDetails,
+    getCurrentUser,
   ],
   triggers: [newMessage],
 };

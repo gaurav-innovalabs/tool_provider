@@ -75,6 +75,26 @@ const STYLES = `
     text-align: left;
   }
   .footer { margin-top: 20px; font-size: 12px; color: #9ca3af; }
+  .card.wide { text-align: left; }
+  .conn-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  .conn-table th, .conn-table td { padding: 9px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  .conn-table th { color: #6b7280; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .conn-table td.empty { color: #9ca3af; text-align: center; padding: 20px 0; }
+  .status-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .status-active { background: #dcfce7; color: #166534; }
+  .status-pending { background: #fef9c3; color: #854d0e; }
+  .status-error { background: #fee2e2; color: #991b1b; }
+  .status-expired { background: #f3f4f6; color: #6b7280; }
+  .btn-danger {
+    background: #fff; color: #dc2626; border: 1px solid #fecaca;
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .btn-danger:hover { background: #fef2f2; }
+  .app-link {
+    display: inline-block; margin: 4px 8px 0 0; padding: 8px 12px;
+    border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; text-decoration: none; color: #111827;
+  }
+  .app-link:hover { border-color: #111827; }
 `;
 
 // Not a full sanitizer — just enough that a provider-supplied error message (external, not fully
@@ -87,10 +107,13 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function renderPage(title: string, bodyHtml: string): Response {
+// `wide`: the connections status page (a table + several app-connect links) needs more room than the
+// 380px single-field forms every other page here renders — same shell, same styles, just a roomier card.
+export function renderPage(title: string, bodyHtml: string, opts?: { wide?: boolean }): Response {
+  const cardClass = opts?.wide ? "card wide" : "card";
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${STYLES}</style></head>
-<body><div class="card">${bodyHtml}</div></body></html>`;
+<body><div class="${cardClass}"${opts?.wide ? ' style="max-width:640px;"' : ""}>${bodyHtml}</div></body></html>`;
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -163,7 +186,64 @@ export function mcpLoginSuccessPage(opts: { mcpUrl: string; token: string; userI
        <label>User ID${opts.reused ? " (reused — same connections as before)" : " (new — save this to log back in as this identity)"}</label>
        <input type="text" readonly value="${escapeHtml(opts.userId)}">
      </div>
-     <div class="footer">Send the token as <code>Authorization: Bearer &lt;token&gt;</code>, or append <code>?token=&lt;token&gt;</code> to the URL if your client only accepts a plain URL. Next time, paste the User ID above into the login form's "Existing user ID" field to reconnect as the same identity instead of starting over.</div>`,
+     <div class="footer">Send the token as <code>Authorization: Bearer &lt;token&gt;</code>, or append <code>?token=&lt;token&gt;</code> to the URL if your client only accepts a plain URL. Next time, paste the User ID above into the login form's "Existing user ID" field to reconnect as the same identity instead of starting over.
+     <br><a href="/mcp/connections?token=${encodeURIComponent(opts.token)}">View your connections &rarr;</a></div>`,
+  );
+}
+
+// Hosted "your connections" status page — the Composio/Pipedream-style dashboard gap called out in
+// PHASES.md Phase 7: before this, connection status was only ever JSON (GET /connections) or a one-shot
+// success/error page right after OAuth completes, with nothing to revisit later. Bound to the same
+// long-lived MCP token every other /mcp/* page uses (src/lib/mcpTokens.ts) — no separate login system.
+export interface ConnectionsPageRow {
+  connection_id: string;
+  appName: string;
+  status: string;
+  created_at: string;
+}
+
+export function connectionsStatusPage(opts: {
+  token: string;
+  connections: ConnectionsPageRow[];
+  connectableApps: { id: string; name: string }[];
+}): Response {
+  const rows = opts.connections.length
+    ? opts.connections
+        .map(
+          (c) => `
+    <tr>
+      <td>${escapeHtml(c.appName)}</td>
+      <td><span class="status-badge status-${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></td>
+      <td>${escapeHtml(new Date(c.created_at).toLocaleString())}</td>
+      <td>
+        <form method="POST" action="/mcp/connections/${encodeURIComponent(c.connection_id)}/disconnect" style="margin:0;">
+          <input type="hidden" name="token" value="${escapeHtml(opts.token)}">
+          <button type="submit" class="btn-danger">Disconnect</button>
+        </form>
+      </td>
+    </tr>`,
+        )
+        .join("")
+    : `<tr><td class="empty" colspan="4">Nothing connected yet — pick an app below.</td></tr>`;
+
+  const connectLinks = opts.connectableApps
+    .map(
+      (a) =>
+        `<a class="app-link" href="/mcp/connections/connect/${encodeURIComponent(a.id)}?token=${encodeURIComponent(opts.token)}">+ Connect ${escapeHtml(a.name)}</a>`,
+    )
+    .join("");
+
+  return renderPage(
+    "Your connections",
+    `<h1>Your connections</h1>
+     <p class="subtitle">Live status for everything this MCP session has connected.</p>
+     <table class="conn-table">
+       <thead><tr><th>App</th><th>Status</th><th>Connected</th><th></th></tr></thead>
+       <tbody>${rows}</tbody>
+     </table>
+     ${connectLinks ? `<p class="subtitle" style="margin:24px 0 8px;">Not connected yet</p>${connectLinks}` : ""}
+     <div class="footer">This page is bound to your MCP bearer token — don't share this link.</div>`,
+    { wide: true },
   );
 }
 

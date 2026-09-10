@@ -5,6 +5,8 @@ import type { AppDefinition } from "../../types";
 import { config } from "../../config";
 import { sendEmail } from "./actions/sendEmail";
 import { listRecentEmails } from "./actions/listRecentEmails";
+import { getEmail } from "./actions/getEmail";
+import { getCurrentUser } from "./actions/getCurrentUser";
 import { listLabels } from "./actions/listLabels";
 import { getLabel } from "./actions/getLabel";
 import { createLabel } from "./actions/createLabel";
@@ -41,7 +43,7 @@ export const gmailApp: AppDefinition = {
     // all; prompt=consent forces the consent screen (and a fresh refresh_token) every time.
     extraAuthorizeParams: { access_type: "offline", prompt: "consent" },
   },
-  actions: [sendEmail, listRecentEmails, listLabels, getLabel, createLabel, updateLabel, deleteLabel, createDraft],
+  actions: [sendEmail, listRecentEmails, getEmail, getCurrentUser, listLabels, getLabel, createLabel, updateLabel, deleteLabel, createDraft],
   // new_label (label creation) was removed — no real event exists for it anywhere, confirmed by
   // exhaustively checking Pipedream's actual 5 Gmail sources during R&D. new_labeled_email (a label being
   // applied to a message) replaces it — that one's real, verified against Pipedream's actual source.

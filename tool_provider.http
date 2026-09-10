@@ -73,11 +73,13 @@
 #   -> we hardcode the "auth config" in code (src/components/<app>/app.ts) — no API to create/inspect/
 #      disable one. Fine at 3 apps; would matter for Phase 5 (bring-your-own OAuth app per auth-patterns.md #3).
 # Delete/disable a Connection     DELETE /connected_accounts/{id}, PATCH .../status
-#   -> list-all is closed (GET /connections?user_id=&app=, Phase 4.6). Still a real gap: no revoke/
-#      disconnect, no enable/disable — currently NO WAY to disconnect a connection short of touching the
-#      store directly.
+#   -> CLOSED (Phase 7): DELETE /connections/{id}?user_id= (real revoke: status -> "revoked" + secrets
+#      cleared, not cosmetic) + MCP's disconnect_connection tool. No separate enable/disable status toggle —
+#      disconnect + reconnect (manage_connection) covers that today, same as trigger pause/resume below.
 # Refresh a Connection            POST /connected_accounts/{nanoid}/refresh
-#   -> matches our own stub: src/lib/oauth.ts's refreshToken() throws "not implemented".
+#   -> we don't expose a manual-refresh endpoint, but it's not a gap: src/lib/oauth.ts's refreshToken() is
+#      real and wired into every action/poll call via src/core/tokenRefresh.ts's ensureFreshConnection()
+#      (refresh-ahead-of-expiry, Phase 4), so a caller never needs to ask for one manually.
 # Toolkit/Tool introspection      GET /toolkits, /toolkits/{slug}, /toolkits/categories, /tools, /tools/{slug}, /tools/enum
 #   -> partially closed: GET /actions (~ /tools, list/search by ?q=) and GET /actions/{tool_slug}
 #      (~ /tools/{slug}, real schema) now exist — see below. Still missing: /toolkits (app-level listing —

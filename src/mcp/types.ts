@@ -59,6 +59,21 @@ export const manageConnectionOutput = z.object({
   connect_url: z.string().optional(),
 });
 
+// --- disconnect_connection ------------------------------------------------------------------------------
+// ~ REST's DELETE /connections/:id (connection_routes.ts) / Composio's DELETE /connected_accounts/{id} —
+// closes the disconnect/revoke gap flagged in PHASES.md Phase 7: until now there was list_connections but
+// no way to actually undo one. Real revoke, not cosmetic — clears `secrets` too, so a later
+// manage_connection/execute_tool call on that app starts a genuinely fresh connect flow.
+
+export const disconnectConnectionInput = z.object({
+  connection_id: z.string().describe("From list_connections — the connection to disconnect"),
+});
+
+export const disconnectConnectionOutput = z.object({
+  connection_id: z.string(),
+  status: z.literal("revoked"),
+});
+
 export const executeToolInput = z.object({
   app: z.string(),
   action: z.string(), // action.key, from a prior search_tools call

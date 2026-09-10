@@ -239,5 +239,58 @@ Full detail: `MCP_GUIDE.md`. 7 meta-tools total now (was 3): `search_tools`, `ge
   discovering the server process needed a restart to pick up the outputSchema fix (no hot-reload on `bun
   index.ts`, only `bun --hot`/`bun run dev`).
 
+## Phase 7 — Live MCP client smoke test (Gmail/Slack via Claude Code) — IN PROGRESS
+Ad-hoc verification session driving the deployed MCP server as a real client (Claude Code), not new
+product code. Tracks what's been exercised so far vs. what's still queued.
+- ✅ Connected Gmail (`manage_connection` → `wait_for_connection`, real OAuth browser flow, went active).
+- ✅ `list_recent_emails` — returned real inbox data.
+- ✅ **Gap closed: Gmail `get_email` action added** (`src/components/gmail/actions/getEmail.ts`) —
+  `format=full` message fetch + a recursive `payload.parts` walk to decode the first `text/plain`/`text/html`
+  leaf (base64url), since a simple top-level `payload.body.data` read only works for single-part messages.
+  Returns `from`/`to`/`subject`/`received_at`/`body_text`/`body_html`/`label_ids`. Registered in
+  `gmailApp.actions` — same `gmail.readonly` scope already granted, no new OAuth scope needed.
+- Phase 7.1 — Gmail deep-dive: test `create_draft` and the new `get_email` action against a real inbox.
+- Phase 7.2 — Gmail write actions: test `send_email`, `create_label`/`update_label`/`delete_label`/
+  `list_labels`/`get_label`.
+- Phase 7.3 — Slack connection: `manage_connection` for Slack, authorize, verify `list_channels`/`list_users`.
+- Phase 7.4 — Slack messaging: `post_message`, `send_direct_message`, `find_user_by_email`,
+  `find_messages`, `update_message`/`delete_message`, reactions.
+- ✅ **Gap closed: disconnect/revoke a connection.** `DELETE /connections/:id?user_id=` (`connection_routes.ts`,
+  ~ Composio's `DELETE /connected_accounts/{id}`) and MCP's new `disconnect_connection` tool
+  (`src/mcp/metaTools.ts`/`types.ts`, registered in `buildMcpServer`, `src/mcp/server.ts`) — both do a real
+  revoke, not a cosmetic flag flip: `status -> "revoked"` AND `secrets -> null`, 404-not-403 on a
+  mismatched owner (same idiom every other ownership check in this codebase uses). A later
+  `manage_connection`/`execute_tool` call on that app now genuinely starts a fresh connect flow, since
+  `getOrCreateActiveConnection` only ever treats `status === "active"` rows as usable.
+- ✅ **Gap closed: hosted "your connections" status page.** `GET /mcp/connections?token=` (`mcp_routes.ts`,
+  `connectionsStatusPage` in `src/lib/connectPage.ts`) — a persistent, revisitable page listing every live
+  connection's app/status/connected-at, a "Disconnect" button per row (`POST /mcp/connections/:id/disconnect`),
+  and a "+ Connect <App>" link per not-yet-connected app (`GET /mcp/connections/connect/:app`, reuses
+  `manageConnection`'s get-or-create + redirects straight to the real `connect_url`). Bound to the same
+  long-lived MCP login token every other `/mcp/*` page already uses (`src/lib/mcpTokens.ts`) — no new
+  credential system. Linked from the MCP-login success page (`mcpLoginSuccessPage`) so the flow is
+  discoverable right after first login, not just a URL you have to know.
+- Verified: `bun run typecheck` and `bun test` (78 pass) clean after all three additions above. Not yet
+  live-clicked through a real browser session — do that as part of Phase 7.3/7.4's Slack pass.
+- ✅ **Real Composio/Pipedream action-parity audit** (not just the ad-hoc gaps above) — diffed our action
+  lists against a real cloned copy of Pipedream's `components/gmail` and `components/slack_v2` on disk
+  (`pipedream_BE/components/`), not guessed. Findings + what got closed:
+  - Gmail (Pipedream: 16 actions vs. our 9 before this pass): closed `get_current_user` (`users/getProfile`
+    — mailbox identity + size, sanity-check before other calls). Still open, lower priority: `download-attachment`,
+    `list-thread-messages`, `modify-labels` (apply/remove labels on a message — distinct from our label
+    CRUD, which manages labels themselves), send-as-alias/delegate/signature admin actions (skipped as
+    edge-case, Pipedream-only completeness, not real gaps for this project's scope).
+  - Slack (Pipedream: 44(!) actions vs. our 15 before this pass) — the real gap, same shape as Gmail's
+    `get_email` fix: **we could write (post/update/delete/react) but not plainly read.** `find_messages`
+    is a *search* (search.messages, needs the user token + search:read), not a channel/thread read. Closed:
+    `get_channel_history` (`conversations.history`), `get_thread_replies` (`conversations.replies`, new
+    `channels:history` scope), `get_channel_details` (`conversations.info`), `get_user_details`
+    (`users.info`), `get_current_user` (`auth.test`, no scope needed) — 5 new actions,
+    `src/components/slack/actions/get{ChannelHistory,ThreadReplies,ChannelDetails,UserDetails,CurrentUser}.ts`.
+    Still open, deprioritized (asked, not chosen this pass): `kick_user`, `set_status`, `list_files`/
+    `get_file`/`delete_file`, `create_reminder`, `update_profile`, `send_block_kit_message`,
+    `reply_to_a_message` (thread write-side — read-side landed, write-side didn't).
+  - Verified: `bun run typecheck` and `bun test` (78 pass) clean with all 6 new actions registered.
+
 ---
 Work on later phases can start in parallel once Phase 1's types (`src/types.ts`) are stable, since every phase builds on that same App/Action/Trigger/Connection shape.

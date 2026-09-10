@@ -11,6 +11,7 @@ import {
   searchTools,
   manageConnection,
   listConnections,
+  disconnectConnection,
   executeTool,
   waitForConnection,
   getToolSchema,
@@ -29,6 +30,8 @@ import {
   manageConnectionOutput,
   listConnectionsInput,
   listConnectionsOutput,
+  disconnectConnectionInput,
+  disconnectConnectionOutput,
   executeToolInput,
   executeToolOutput,
   waitForConnectionInput,
@@ -111,6 +114,16 @@ export function buildMcpServer(userId: string, scope: AppScope = null): McpServe
       outputSchema: listConnectionsOutput,
     },
     (input) => toolResult(listConnections(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "disconnect_connection",
+    {
+      description: "Disconnect (revoke) one of the current user's connections. Clears the stored credentials; a later manage_connection/execute_tool call on that app starts a fresh connect flow.",
+      inputSchema: disconnectConnectionInput.shape,
+      outputSchema: disconnectConnectionOutput,
+    },
+    (input) => toolResult(disconnectConnection(userId, input, scope)),
   );
 
   server.registerTool(

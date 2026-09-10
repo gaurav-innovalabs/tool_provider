@@ -6,10 +6,12 @@
 
 import { z } from "zod";
 import { userStore } from "../core/store";
-import { createMcpLoginToken } from "../lib/mcpTokens";
+import { createMcpLoginToken, resolveMcpLoginToken } from "../lib/mcpTokens";
 import { config } from "../config";
-import { mcpLoginFormPage, mcpLoginSuccessPage, errorPage } from "../lib/connectPage";
+import { mcpLoginFormPage, mcpLoginSuccessPage, connectionsStatusPage, errorPage } from "../lib/connectPage";
 import { handleMcpHttpRequest } from "../mcp/httpServer";
+import { getApp, listApps } from "../core/registry";
+import { manageConnection, listConnections, disconnectConnection } from "../mcp/metaTools";
 
 const loginBody = z.object({
   access_key: z.string(),
@@ -76,5 +78,70 @@ export const mcpRoutes = {
     GET: async (req: Request) => handleMcpHttpRequest(req),
     POST: async (req: Request) => handleMcpHttpRequest(req),
     DELETE: async (req: Request) => handleMcpHttpRequest(req),
+  },
+
+  // Hosted "your connections" status page (PHASES.md Phase 7 gap) — a persistent page a human can revisit
+  // to see every connection's live status at a glance, connect an app that isn't yet, or disconnect one.
+  // Public route (browser-visited, can't attach our Authorization header) — auth is the same long-lived
+  // MCP login token every other /mcp/* page already relies on, not a new credential.
+  "/mcp/connections": {
+    GET: async (req: Request) => {
+      const url = new URL(req.url);
+      const token = url.searchParams.get("token");
+      if (!token) return mcpLoginFormPage({ errorMessage: "Log in first to view your connections." });
+      const payload = await resolveMcpLoginToken(token);
+      if (!payload) return mcpLoginFormPage({ errorMessage: "That link has expired or is invalid — log in again." });
+
+      const { connections } = await listConnections(payload.user_id, {}, payload.apps);
+      const apps = payload.apps ? listApps().filter((a) => payload.apps!.includes(a.id)) : listApps();
+      const live = connections.filter((c) => c.status !== "revoked");
+      const connectedAppIds = new Set(live.filter((c) => c.status === "active" || c.status === "pending").map((c) => c.app));
+
+      return connectionsStatusPage({
+        token,
+        connections: live
+          .map((c) => ({ connection_id: c.connection_id, appName: getApp(c.app).name, status: c.status, created_at: c.created_at }))
+          .sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
+        connectableApps: apps.filter((a) => !connectedAppIds.has(a.id)).map((a) => ({ id: a.id, name: a.name })),
+      });
+    },
+  },
+
+  // Kicks off a connect flow straight from the status page instead of round-tripping through an MCP
+  // client — same manage_connection get-or-create logic, just fronted by a GET link a browser can follow.
+  "/mcp/connections/connect/:app": {
+    GET: async (req: Request & { params: { app: string } }) => {
+      const url = new URL(req.url);
+      const token = url.searchParams.get("token");
+      if (!token) return mcpLoginFormPage({ errorMessage: "Log in first to connect an app." });
+      const payload = await resolveMcpLoginToken(token);
+      if (!payload) return mcpLoginFormPage({ errorMessage: "That link has expired or is invalid — log in again." });
+
+      try {
+        const result = await manageConnection(payload.user_id, { app: req.params.app }, payload.apps);
+        const destination =
+          result.status === "pending" && result.connect_url ? result.connect_url : `${config.BASE_URL}/mcp/connections?token=${encodeURIComponent(token)}`;
+        return Response.redirect(destination, 302);
+      } catch (err) {
+        return errorPage(err instanceof Error ? err.message : String(err));
+      }
+    },
+  },
+
+  "/mcp/connections/:id/disconnect": {
+    POST: async (req: Request & { params: { id: string } }) => {
+      const form = await req.formData();
+      const token = form.get("token");
+      if (typeof token !== "string" || !token) return mcpLoginFormPage({ errorMessage: "Log in first to manage your connections." });
+      const payload = await resolveMcpLoginToken(token);
+      if (!payload) return mcpLoginFormPage({ errorMessage: "That link has expired or is invalid — log in again." });
+
+      try {
+        await disconnectConnection(payload.user_id, { connection_id: req.params.id }, payload.apps);
+      } catch (err) {
+        return errorPage(err instanceof Error ? err.message : String(err));
+      }
+      return Response.redirect(`${config.BASE_URL}/mcp/connections?token=${encodeURIComponent(token)}`, 302);
+    },
   },
 };

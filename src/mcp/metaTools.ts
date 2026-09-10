@@ -20,6 +20,8 @@ import type {
   manageConnectionOutput,
   listConnectionsInput,
   listConnectionsOutput,
+  disconnectConnectionInput,
+  disconnectConnectionOutput,
   executeToolInput,
   executeToolOutput,
   waitForConnectionInput,
@@ -151,6 +153,22 @@ export async function listConnections(userId: string, input: z.infer<typeof list
       updated_at: c.updated_at,
     })),
   };
+}
+
+// --- disconnect_connection -----------------------------------------------------------------------------
+// Mirrors REST's DELETE /connections/:id (connection_routes.ts) — same 404-not-403 ownership idiom every
+// other user-scoped meta-tool here uses, same real effect (status -> revoked, secrets cleared).
+
+export async function disconnectConnection(userId: string, input: z.infer<typeof disconnectConnectionInput>, scope: AppScope): Promise<z.infer<typeof disconnectConnectionOutput>> {
+  const connection = await connectionStore.get(input.connection_id);
+  if (!connection || connection.user_id !== userId) {
+    throw new Error(`Unknown connection: ${input.connection_id}`);
+  }
+  assertAppAllowed(connection.app, scope);
+  if (connection.status !== "revoked") {
+    await connectionStore.update(connection.connection_id, { status: "revoked", secrets: null, updated_at: new Date().toISOString() });
+  }
+  return { connection_id: connection.connection_id, status: "revoked" };
 }
 
 // --- wait_for_connection -------------------------------------------------------------------------------

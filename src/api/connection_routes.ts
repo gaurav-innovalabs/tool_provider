@@ -133,6 +133,29 @@ export const connectionRoutes = {
       }
       return Response.json(redact(connection));
     },
+
+    // ~ Composio's DELETE /connected_accounts/{id} — closes the other half of the long-standing
+    // "list/delete/disable a connection" gap (list existed since Phase 4.6, delete didn't). Doesn't
+    // actually delete the row (action_logs/trigger rows FK to it) — flips it to "revoked" and clears
+    // `secrets`, same real effect: the credential is gone, ensureFreshConnection/getOrCreateActiveConnection
+    // will no longer treat it as usable, and a later manage_connection call starts a fresh connect flow.
+    DELETE: async (req: Request & { params: { id: string } }) => {
+      const url = new URL(req.url);
+      const user_id = url.searchParams.get("user_id");
+      if (!user_id) {
+        return Response.json({ error: "user_id query param is required" }, { status: 400 });
+      }
+      // 404, not 403, on a mismatched owner — don't reveal that a connection_id exists at all to a
+      // non-owner, same idiom trigger_routes.ts's ownership checks already use.
+      const connection = await connectionStore.get(req.params.id);
+      if (!connection || connection.user_id !== user_id) {
+        return Response.json({ error: `Unknown connection: ${req.params.id}` }, { status: 404 });
+      }
+      if (connection.status !== "revoked") {
+        await connectionStore.update(connection.connection_id, { status: "revoked", secrets: null, updated_at: new Date().toISOString() });
+      }
+      return Response.json({ connection_id: connection.connection_id, status: "revoked" });
+    },
   },
 };
 
