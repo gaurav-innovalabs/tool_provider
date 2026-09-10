@@ -6,6 +6,13 @@
 ### (Swagger UI, schemas generated live from the actual zod definitions in src/components/*/actions/*.ts —
 ### can't drift out of sync with the code, see src/openapi.ts's header comment).
 ###
+### This file only covers general/account endpoints + ONE example action per app, as a quick smoke test.
+### The FULL per-app flow — connect, every action, every trigger (subscribe/unsubscribe) — lives in its own
+### .http file, one per component, mirroring src/components/<app>/ 1:1:
+###   test_components/gmail/gmail.http
+###   test_components/slack/slack.http
+### (SerpApi has only one action total, so it isn't split out — see the one example below.)
+###
 ### For Gmail triggers to actually fire, `bun run worker` (worker.ts) must be running alongside `bun run
 ### dev` (the API server, this base_url) — Gmail polling happens in a separate process, see PHASES.md
 ### Phase 3. Slack's new_message trigger needs no worker — it's delivered by the API server itself via
@@ -35,36 +42,55 @@
 #                                              activating — a bad value re-renders the same form with the
 #                                              real provider error, token stays valid to retry.
 # GET    /connections/{id}                   ~ GET  /connected_accounts/{nanoid}
-# POST   /actions/{app}/{action}             ~ POST /tools/execute/{tool_slug}
+# GET    /connections                        ~ GET  /connected_accounts (list, filtered to `user_id`, +optional `app`)
+# GET    /actions                            ~ GET  /tools (list/search)
+# GET    /actions/{tool_slug}                ~ GET  /tools/{slug} (schema)
+# POST   /actions/execute/{tool_slug}        ~ POST /tools/execute/{tool_slug} — SAME shape now: one flat
+#                                              tool_slug (e.g. GMAIL_SEND_EMAIL), not two path segments.
 # GET    /oauth/callback/{app}               (internal redirect target, not a public API either side)
-# GET    /triggers                           ~ GET  /triggers_types — no auth required here, unlike Composio
+# GET    /triggers                           ~ GET  /triggers_types — trigger TYPES (available to subscribe),
+#                                              not instances. Bearer-token-gated same as everything else now
+#                                              (src/lib/apiAuth.ts) — was unauthenticated at first pass.
+# GET    /triggers/instances                 ~ no direct Composio equivalent — a user's subscribed
+#                                              TriggerInstances, distinct from GET /triggers above
 # POST   /triggers/{app}/{trigger}/subscribe ~ POST /trigger_instances/{slug}/upsert — but ALSO takes
 #                                              webhook_url in the same call (see "Real gaps" below for the
 #                                              webhook_subscriptions split Composio does instead)
+# PATCH  /triggers/{id}                      (no Composio equivalent — extra_metadata-only update, the
+#                                              client's own editable notes space on a TriggerInstance)
 # DELETE /triggers/{id}                      ~ DELETE /trigger_instances/manage/{triggerId}
+# GET    /triggers/instances/{id}/logs       ~ no direct Composio equivalent — per-instance delivery/poll
+#                                              run history (status, webhook_url, error, resendable)
+# GET    /triggers/logs/{log_id}             ~ GET  /v1/events/{id} (Stripe) — one event's full body,
+#                                              including its payload; `log_id` IS the event id for a
+#                                              delivery row (src/core/scheduler.ts's deliverEvent/
+#                                              resendDelivery generate one `evt_...` id, used as both)
+# POST   /triggers/logs/{log_id}/resend      ~ Stripe CLI's `events resend` — re-POSTs an already-captured
+#                                              delivery's exact payload to the instance's CURRENT webhook_url
 #
 # ---- Composio has, we DON'T (real gaps) ------------------------------------
 # Auth Configs (full CRUD)        POST/GET/PATCH/DELETE /auth_configs, PATCH .../{status}
 #   -> we hardcode the "auth config" in code (src/components/<app>/app.ts) — no API to create/inspect/
 #      disable one. Fine at 3 apps; would matter for Phase 5 (bring-your-own OAuth app per auth-patterns.md #3).
-# List/delete/disable a Connection   GET /connected_accounts (list ALL), DELETE, PATCH .../status
-#   -> we only have GET-by-id, no list-all, no revoke/disconnect, no enable/disable. Real gap: there is
-#      currently NO WAY to disconnect a connection short of touching the store directly.
+# Delete/disable a Connection     DELETE /connected_accounts/{id}, PATCH .../status
+#   -> list-all is closed (GET /connections?user_id=&app=, Phase 4.6). Still a real gap: no revoke/
+#      disconnect, no enable/disable — currently NO WAY to disconnect a connection short of touching the
+#      store directly.
 # Refresh a Connection            POST /connected_accounts/{nanoid}/refresh
 #   -> matches our own stub: src/lib/oauth.ts's refreshToken() throws "not implemented".
 # Toolkit/Tool introspection      GET /toolkits, /toolkits/{slug}, /toolkits/categories, /tools, /tools/{slug}, /tools/enum
-#   -> NOTHING. No way to ask this server "what apps/actions exist" over the API — you read
-#      src/components/*/app.ts source, or GET /openapi.json and parse it yourself.
+#   -> partially closed: GET /actions (~ /tools, list/search by ?q=) and GET /actions/{tool_slug}
+#      (~ /tools/{slug}, real schema) now exist — see below. Still missing: /toolkits (app-level listing —
+#      we only expose the flattened tool level) and /toolkits/categories (no category concept here).
 # Natural-language tool input     POST /tools/execute/{tool_slug}/input
 #   -> not applicable at our scale (this is Composio's "let an LLM turn free text into typed arguments"
 #      helper, useful across 1000s of tools; less valuable across 10).
 # Trigger enable/disable (pause without deleting)   PATCH /trigger_instances/manage/{id}
-#   -> we have create (subscribe) + delete (unsubscribe), real and working (Gmail new_email,
-#      new_labeled_email; Slack new_message still a stub). No pause/resume — delete and re-subscribe is
-#      the only option today.
+#   -> we have create (subscribe) + delete (unsubscribe), real and working. No pause/resume — delete and
+#      re-subscribe is the only option today.
 # Tool Router (session-based dynamic tool use)   POST /tool_router/session + 10 sub-routes
 #   -> philosophically different, not just missing: Composio's Tool Router lets an agent search/discover
-#      tools at runtime across thousands of toolkits. We don't have (and at ~10 actions, don't need) a
+#      tools at runtime across thousands of toolkits. We don't have (and at ~25 actions, don't need) a
 #      discovery layer — every action is already known/declared, called directly by app+key.
 # Webhook Endpoints / Subscriptions (outbound delivery config)   full CRUD, both namespaces
 #   -> matches our own gap: research/triggers-patterns.md's "Phase 6, not decided yet" fan-in-vs-per-trigger
@@ -137,11 +163,13 @@ Content-Type: application/json
   "app": "gmail"
 }
 
-### Copy the returned connect_url and open it in a browser to finish OAuth
+### Copy the returned connect_url and open it in a browser to finish OAuth. See test_components/gmail/gmail.http
+### for the full Gmail action + trigger flow once connected.
 @gmail_connection_id = conn_REPLACE_ME
 
 ### ----------------------------------------------------
-### 🔧 Connect an app — oauth2 (Slack). Same shape as Gmail above.
+### 🔧 Connect an app — oauth2 (Slack). Same shape as Gmail above. See test_components/slack/slack.http for
+### the full Slack action + trigger flow once connected.
 ### ----------------------------------------------------
 POST {{base_url}}/connections
 Content-Type: application/json
@@ -165,7 +193,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned connect_url and open it in a browser — it's our own field-collection form for SerpApi
-@serpapi_connection_id = conn_b20d6dda-6828-4919-8c25-72a758862965
+@serpapi_connection_id = conn_REPLACE_ME
 
 ### ----------------------------------------------------
 ### 🔧 Check a connection's status
@@ -177,33 +205,40 @@ Content-Type: application/json
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{gmail_connection_id}}
 
-### ----------------------------------------------------
-### 🔧 Check a connection's status
-#### composio ->>> GET /connected_accounts/{id} — status: INITIATED/ACTIVE/FAILED/EXPIRED/INACTIVE +
-#### status_reason. GET /connected_accounts (no id) lists ALL connections with filters.
-#### but we have: GET /connections/{id} only — smaller state machine (pending/active/revoked/error, no
-#### distinct EXPIRED/auto-timeout — see research/execution-models.md's Composio comparison note), and
-#### there is NO list-all-connections endpoint at all (real gap, noted above). Secrets always redacted.
-### ----------------------------------------------------
+###
 GET {{base_url}}/connections/{{serpapi_connection_id}}
+
+### ----------------------------------------------------
+### 🔧 List / search tools (~ Composio's GET /tools)
+### ----------------------------------------------------
+GET {{base_url}}/actions
+
+###
+GET {{base_url}}/actions?q=gmail
+
+### ----------------------------------------------------
+### 🔧 Get one tool's real schema (~ Composio's GET /tools/{slug})
+### ----------------------------------------------------
+GET {{base_url}}/actions/GMAIL_SEND_EMAIL
 
 ### ----------------------------------------------------
 ### 🔧 List available apps / their actions & triggers
 #### composio ->>> GET /toolkits, /toolkits/{slug}, /tools?toolkit_slug=..., /tools/enum
-#### but we have: NO equivalent route (real gap, noted above). Closest thing: GET /openapi.json, which
+#### but we have: no app-level (/toolkits) route yet (real gap, noted above) — GET /actions above covers
+#### the tool level. GET /openapi.json still works too, which
 #### DOES list every real action with its live schema (generated, not hand-written) — just not shaped
-#### as a "toolkit list", and nothing for triggers since none are implemented yet.
+#### as a "toolkit list". GET /triggers below covers the trigger side the same way.
 ### ----------------------------------------------------
 GET {{base_url}}/openapi.json
 
 ### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: send_email
+### 🔧 Example action — Gmail: send_email. Full Gmail action list: test_components/gmail/gmail.http
 #### composio ->>> POST /tools/execute/{TOOL_SLUG} { user_id, connected_account_id, arguments, version }
 #### — user_id AND connected_account_id both required, Composio composes them server-side.
-#### but we have: POST /actions/:app/:action { connection_id, input } — connection_id alone implies both
-#### the user and the app.
+#### but we have: POST /actions/execute/{tool_slug} { connection_id, input } — connection_id alone implies
+#### both the user and the app. tool_slug is the same flat shape as Composio's (GMAIL_SEND_EMAIL).
 ### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/send_email
+POST {{base_url}}/actions/execute/GMAIL_SEND_EMAIL
 Content-Type: application/json
 
 {
@@ -216,78 +251,9 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: list_recent_emails
+### 🔧 Example action — Slack: post_message. Full Slack action list: test_components/slack/slack.http
 ### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/list_recent_emails
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "max_results": 5 }
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: list_labels
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/list_labels
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": {}
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: create_label
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/create_label
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "name": "TestLabel" }
-}
-
-### Copy a label id here to test get/update/delete below
-@gmail_label_id = Label_12
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: get_label
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/get_label
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "label_id": "{{gmail_label_id}}" }
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: update_label
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/update_label
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "label_id": "{{gmail_label_id}}", "name": "RenamedLabel" }
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: delete_label
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/delete_label
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "label_id": "{{gmail_label_id}}" }
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Slack: post_message
-### ----------------------------------------------------
-POST {{base_url}}/actions/slack/post_message
+POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
 Content-Type: application/json
 
 {
@@ -296,20 +262,9 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Execute an action — Slack: list_channels
+### 🔧 Example action — SerpApi: search (SerpApi's only action)
 ### ----------------------------------------------------
-POST {{base_url}}/actions/slack/list_channels
-Content-Type: application/json
-
-{
-  "connection_id": "{{slack_connection_id}}",
-  "input": { "limit": 20 }
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — SerpApi: search
-### ----------------------------------------------------
-POST {{base_url}}/actions/serpapi/search
+POST {{base_url}}/actions/execute/SERPAPI_SEARCH
 Content-Type: application/json
 
 {
@@ -318,29 +273,31 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Triggers — list available (Gmail new_email, Gmail new_labeled_email, Slack new_message)
+### 🔧 Triggers — list available (Gmail: new_email, new_labeled_email, new_sent_email, new_starred_email,
+### new_draft. Slack: new_message.) Full per-app subscribe/unsubscribe flow: test_components/gmail/gmail.http
+### and test_components/slack/slack.http.
 #### composio ->>> GET /triggers_types (per-toolkit, requires x-api-key even for schema-only info).
 #### but we have: GET /triggers, derived live from the registry (same "generated, not hand-maintained"
 #### idea as /openapi.json's action schemas) — no auth required to see what's available. Each entry
-#### includes default_poll_interval_ms — NOT a global setting, see next block.
+#### includes default_poll_interval_ms — NOT a global setting, see src/types.ts's TriggerDefinition
+#### comment. Each entry also includes `payload`: real JSON Schema (via z.toJSONSchema) of the `data`
+#### object this trigger delivers to a subscriber's webhook_url — `null` for a trigger that hasn't
+#### declared its schema yet (TriggerDefinition.payload is optional).
 ### ----------------------------------------------------
 GET {{base_url}}/triggers
 
 ### ----------------------------------------------------
-### 🔧 Triggers — subscribe (Gmail new_email)
+### 🔧 Example trigger — subscribe (Gmail new_email). Rest of Gmail's triggers, and Slack's, are in the
+### per-app .http files above.
 #### composio ->>> POST /trigger_instances/{slug}/upsert { connected_account_id | user_id, trigger_config:
-#### {interval, ...} } — per-trigger interval, NOT global (their real docs, 15-min minimum as of their
-#### 2026-03-11 changelog). Event DELIVERY is a separate step: POST /webhook_subscriptions { webhook_url,
-#### enabled_events[] }, one URL for the whole project, decoupled from individual trigger creation.
+#### {interval, ...} } — per-trigger interval, NOT global. Event DELIVERY is a separate step: POST
+#### /webhook_subscriptions { webhook_url, enabled_events[] }, one URL for the whole project, decoupled
+#### from individual trigger creation.
 #### but we have: ONE call does both — POST /triggers/:app/:trigger/subscribe { connection_id, webhook_url,
-#### poll_interval_ms? }. No global interval either (verified against Pipedream's real published
-#### @pipedream/platform package: DEFAULT_POLLING_SOURCE_TIMER_INTERVAL is a PER-SOURCE prop default, not
-#### global) — each trigger declares its own default (src/types.ts's TriggerDefinition.defaultPollIntervalMs),
-#### overridable per-subscription via poll_interval_ms below. webhook_url is attached per-subscription
-#### rather than as a separate project-wide resource (deliberate simplification, see
-#### research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section).
-#### src/core/scheduler.ts POSTs new events to webhook_url with a Composio-style envelope: {id, type,
-#### metadata: {trigger_slug, trigger_instance_id, connection_id, user_id, app}, data, timestamp}.
+#### poll_interval_ms? }. No global interval either — each trigger declares its own default
+#### (src/types.ts's TriggerDefinition.defaultPollIntervalMs), overridable per-subscription via
+#### poll_interval_ms below. src/core/scheduler.ts POSTs new events to webhook_url with a Composio-style
+#### envelope: {id, type: "<app>.<trigger_key>", metadata: {trigger_instance_id, connection_id, user_id, app, extra_metadata}, data, timestamp}.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_email/subscribe
 Content-Type: application/json
@@ -352,33 +309,6 @@ Content-Type: application/json
 
 ### Copy the returned trigger_instance_id here to unsubscribe below
 @gmail_new_email_trigger_id = ti_REPLACE_ME
-
-### ----------------------------------------------------
-### 🔧 Triggers — subscribe (Gmail new_labeled_email — fires when a label is applied to a message)
-#### Real trigger, verified directly against Pipedream's actual source
-#### (components/gmail/sources/new-labeled-email/). A fabricated "new_label" (label CREATION) trigger was
-#### built first and removed — Gmail has no event feed for label creation at all, confirmed by
-#### exhaustively listing all 5 of Pipedream's real Gmail sources (none of them is that either).
-### ----------------------------------------------------
-POST {{base_url}}/triggers/gmail/new_labeled_email/subscribe
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here"
-}
-
-### ----------------------------------------------------
-### 🔧 Execute an action — Gmail: create_draft
-#### Real action, verified against Pipedream's actual (and only) Gmail draft action — gmail-create-draft.
-### ----------------------------------------------------
-POST {{base_url}}/actions/gmail/create_draft
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "input": { "to": "someone@example.com", "subject": "Draft from tool_provider.http", "body": "Not sent yet." }
-}
 
 ### ----------------------------------------------------
 ### 🔧 Triggers — unsubscribe

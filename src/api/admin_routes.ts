@@ -64,6 +64,8 @@ export const adminRoutes = {
           status: l.status,
           ran_at: l.ran_at,
           error: l.error,
+          webhook_url: l.webhook_url,
+          resendable: l.payload !== undefined,
         })),
       );
     },

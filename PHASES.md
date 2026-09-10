@@ -13,14 +13,14 @@ tool_provider.http, and each chat exchange's live-endpoint tests), not just decl
 
 ## Phase 2 — Actions ✅ DONE
 - 11 real actions: Gmail (`send_email`, `list_recent_emails`, 5 label CRUD, `create_draft`), Slack (`post_message`, `list_channels`), SerpApi (`search`).
-- Every action declares real zod `input`/`output` schemas — enforced at the dispatch boundary (`POST /actions/:app/:action`), also used to auto-generate `/openapi.json` (see `src/openapi.ts`).
+- Every action declares real zod `input`/`output` schemas — enforced at the dispatch boundary (`POST /actions/execute/:tool_slug`), also used to auto-generate `/openapi.json` (see `src/openapi.ts`).
 - No SDKs — plain `fetch` against each provider's REST API, kept deliberately lean.
 
 ## Phase 3 — Triggers ✅ DONE (Gmail polling + Slack webhook, both real and verified)
 - ✅ **Worker split**: trigger polling runs in a SEPARATE process (`worker.ts`, `bun run worker`) from the API server (`index.ts`) — a stuck/slow poll cycle can't make the API unresponsive and vice versa. Both need to be running for triggers to actually fire. Webhook-mode triggers (Slack) are delivered by the API server itself (that's where the inbound POST lands), not the worker — the worker only matters for poll-mode triggers (Gmail).
 - ✅ Scheduler (`src/core/scheduler.ts`): **no global poll interval** — verified from Pipedream's actual published npm package (`@pipedream/platform`'s `DEFAULT_POLLING_SOURCE_TIMER_INTERVAL = 60 * 15`, a per-source default, not a global one) and Composio's per-trigger `trigger_config.interval`. Each `TriggerInstance` carries its own `poll_interval_ms`, resolved at subscribe time from the trigger's `defaultPollIntervalMs` (or an explicit override). `SCHEDULER_TICK_MS` = 2 min (checks what's due, not a per-trigger cadence); each Gmail trigger's own default is 8 min — a never-polled instance is picked up on the very next tick regardless, to seed its cursor promptly. Delivers to `webhook_url` with a Composio-style envelope (`{id, type, metadata, data, timestamp}`), verified against a real local HTTP receiver. One instance failing (bad token, etc.) is isolated — marked `error`, doesn't kill the cycle for other instances (verified with a real Gmail 401).
 - ✅ `GET /triggers` — lists every real trigger from the registry (not hand-maintained), including each one's `default_poll_interval_ms`. `POST /triggers/:app/:trigger/subscribe` — real, takes `{connection_id, webhook_url, poll_interval_ms?}`, validates connection is active and belongs to that app, creates the `TriggerInstance`. `DELETE /triggers/:id` — unsubscribe.
-- ✅ Gmail `new_email`: real `history.list` + `historyId` cursor implementation (per `research/gmail-deep-dive.md` — not timestamp polling), reseeds on a 404 (expired cursor). 8-min default interval.
+- ✅ Gmail `new_email`: real `history.list` + `historyId` cursor implementation (per `docs/research/gmail-deep-dive.md` — not timestamp polling), reseeds on a 404 (expired cursor). 8-min default interval.
 - ✅ Gmail `new_labeled_email`: fires when a label is applied to a message — real trigger, verified directly against Pipedream's actual source (`components/gmail/sources/new-labeled-email/`). A fabricated "new_label" (label *creation*) trigger was built first and then removed — Gmail has no event feed for label creation at all (only message-level `labelAdded`/`labelRemoved`), confirmed by exhaustively listing all 5 of Pipedream's real Gmail sources (none of them is label-creation either).
 - ✅ Gmail `create_draft` action added alongside the trigger work — verified against Pipedream's real (and only) draft-related Gmail action.
 - ✅ Slack `new_message` — **real webhook trigger, built and verified end-to-end**: `POST /webhooks/slack/events` handles Slack's `url_verification` handshake, real HMAC-SHA256 signature verification (`src/lib/slackSignature.ts`, same algorithm n8n's real `SlackTrigger.node.ts` implements — replay-guarded via a 5-min timestamp window), looks up the right `Connection` by `team_id` (captured at OAuth-exchange time, `src/lib/oauth.ts`), filters out bot/own messages, and delivers to every matching active `TriggerInstance`'s `webhook_url` via the same `deliverEvent()` the poll-based scheduler uses. Verified with real computed signatures: valid/invalid/stale-timestamp cases, bot-message filtering, and a full connection→instance→delivery round trip against a real local HTTP receiver.
@@ -28,33 +28,124 @@ tool_provider.http, and each chat exchange's live-endpoint tests), not just decl
 - ✅ Retry/circuit-breaker: explicitly decided AGAINST — "no need to retry at all, just failed ok". A failed poll or delivery writes one `trigger_logs` row with `status: "error"` and is left alone; no retry queue, by design, not by omission.
 - ✅ **`trigger_logs` table** (`src/db/schema.ts`, `triggerLogStore` in `core/store.ts`): one row per trigger RUN — every poll attempt (`src/core/scheduler.ts`'s `logPollRun`, even when it produces zero events) and every webhook delivery attempt (`deliverEvent`, poll-mode and Slack webhook-mode alike, since both call the same function). `trigger_instance_id` FK is `onDelete: cascade` so `DELETE /triggers/:id` can still delete an instance that has log history. Exposed read-only via `GET /admin/trigger_logs?limit=`. Verified live: seeded a real gmail trigger instance with a broken connection, ran a real poll cycle, confirmed the resulting error row in `psql`, then confirmed the cascade delete actually works (instance + its logs both gone, no FK violation).
 - TODO: `GET /admin/trigger_logs` needs real pagination (cursor/offset), not just a flat `limit` — same gap as `/admin/logs` for action_logs. **[Low priority for now]**
-- TODO: a "resend to webhook" action per `trigger_logs` row — re-POST that row's already-captured event payload to the instance's current `webhook_url` on demand (admin-triggered, not automatic — still no background retry queue, this is a manual one-off re-send). Needs the row to actually store the delivered `data` payload, which it doesn't yet (only status/error). **[Low priority for now]**
+- ✅ "resend to webhook" — done in Phase 4.6, client-facing (not just admin) and Stripe-CLI-`events resend`-shaped.
 - Still open: does a `new_message` `TriggerInstance` need a specific `channel_id` at subscribe-time, or does it fire for every channel the app is in? Currently: every channel.
 
 ## Phase 4 — Durable storage — DONE
 - ✅ Encryption at rest: AES-256-GCM (`src/lib/cipher.ts`), verified round-trip + tamper detection. Every `Connection.secrets` is encrypted before it touches `core/store.ts`.
 - ✅ Migrations: Drizzle, forward-only by design, verified against real Postgres (`MIGRATIONS.md`), applied to the real `tool_provider` database (`bun run db:migrate`).
 - ✅ **Linked**: `core/store.ts` is real Drizzle/Postgres (`src/lib/postgres.ts`'s `orm`, on `Bun.sql`) — in-memory Maps removed entirely. Verified live: created a user + connection through the real API, confirmed the rows in `psql` directly, killed the server process, restarted it, and re-fetched the same connection from the fresh process — data survived. `worker.ts` and `index.ts` both connect to the same database with no errors, and `bun run dev` boots both in parallel (Bun's native `--parallel`, no Turborepo).
-- ✅ Token refresh: `src/lib/oauth.ts`'s `refreshToken()` is real — standard `grant_type=refresh_token`, works for both Gmail (always returns a fresh token, never a new `refresh_token`) and Slack (only relevant if the Slack app has token rotation enabled — its rotation flow returns a new single-use `refresh_token` each time, handled the same way). Wired in via `src/core/tokenRefresh.ts`'s `ensureFreshConnection()` — refresh-AHEAD-of-expiry (5 min margin, per `research/auth-patterns.md` #4's real Nango pattern), called before every action (`action_routes.ts`) and every poll (`scheduler.ts`); a no-op for api_key connections or any oauth2 token not close to expiry. A refresh failure marks the connection `error` and throws — no retry, same "just fail" decision as triggers. Verified live: a token with no `refresh_token` throws the expected reconnect-needed error; a fake `refresh_token` against Google's real token endpoint surfaces Google's real `invalid_grant` error.
+- ✅ Token refresh: `src/lib/oauth.ts`'s `refreshToken()` is real — standard `grant_type=refresh_token`, works for both Gmail (always returns a fresh token, never a new `refresh_token`) and Slack (only relevant if the Slack app has token rotation enabled — its rotation flow returns a new single-use `refresh_token` each time, handled the same way). Wired in via `src/core/tokenRefresh.ts`'s `ensureFreshConnection()` — refresh-AHEAD-of-expiry (5 min margin, per `docs/research/auth-patterns.md` #4's real Nango pattern), called before every action (`action_routes.ts`) and every poll (`scheduler.ts`); a no-op for api_key connections or any oauth2 token not close to expiry. A refresh failure marks the connection `error` and throws — no retry, same "just fail" decision as triggers. Verified live: a token with no `refresh_token` throws the expected reconnect-needed error; a fake `refresh_token` against Google's real token endpoint surfaces Google's real `invalid_grant` error.
 - Redis (`src/lib/redis.ts`) is now genuinely in use (connect tokens, Phase 1) — the Phase 3 scheduler's per-instance locking (`acquireTriggerLock`) is still the unimplemented part. S3 (`src/lib/s3.ts`, use still unconfirmed) — client exists, unused.
 
+## Phase 4.5 — REST API: Composio-standard tool_slug shape — ✅ DONE
+- ✅ **Collapsed OpenAPI path bloat**: `src/openapi.ts`'s `actionPaths()` used to generate one full hand-shaped
+  OpenAPI path per action (`/actions/{app}/{key}`, exploding `/openapi.json` by a whole path object per new
+  action). Replaced with the real Composio v3 shape, confirmed against `.idea/composio.http`'s actual
+  responses: ONE flat `tool_slug` per action (e.g. `GMAIL_SEND_EMAIL`, `src/core/registry.ts`'s
+  `toolSlug()`/`findByToolSlug()`), THREE fixed generic paths regardless of action count —
+  `GET /actions` (list/search, `?q=`), `GET /actions/{tool_slug}` (real per-action schema on demand,
+  ~ Composio's `GET /tools/{slug}`), `POST /actions/execute/{tool_slug}` (run, ~ Composio's
+  `POST /tools/execute/{tool_slug}`). `/openapi.json` path count is now constant (12) instead of growing
+  with every action added. Old `POST /actions/:app/:action` route removed, not kept as a compat shim.
+- ✅ Closes half of the `tool_provider.http`-documented "Toolkit/Tool introspection: NOTHING" gap — REST
+  callers can now discover/inspect actions the same way MCP callers already could via `search_tools`/
+  `get_tool_schema` (Phase-MCP-1/3), without reading source or parsing the full OpenAPI spec.
+- TODO: MCP's `execute_tool`/`get_tool_schema` (`src/mcp/types.ts`) still take separate `{app, action}`
+  fields rather than one `tool_slug` string — left as-is for now since it's already unambiguous structured
+  input (not a path to parse) and changing it would touch the already-verified Phase-MCP-3 tool contracts;
+  revisit only if a client actually wants the identical `tool_slug` shape on both transports.
+- TODO: no `/toolkits` (app-level) route yet — `GET /actions` only exposes the flattened tool level, same
+  gap `tool_provider.http`'s comparison still calls out. **[Low priority — 3 apps, not worth it yet]**
+
+## Phase 4.6 — Client-facing "what have I connected/subscribed" + trigger log resend — ✅ DONE
+- ✅ **`GET /connections?user_id=&app=`** (`connection_routes.ts`) and MCP's `list_connections` — ~ Composio's
+  `GET /connected_accounts`, filtered to one user. Closed the "no way to see what you've already connected"
+  half of `tool_provider.http`'s documented gap (the other half — disconnect/revoke — is still open, see
+  that file).
+- ✅ **`GET /triggers/instances?user_id=&app=`** (`trigger_routes.ts`) and MCP's `list_trigger_instances` —
+  distinct from `GET /triggers` (available trigger TYPES). Store: `connectionStore.listByUser()` and
+  `triggerInstanceStore.listByUser()` both gained an optional `app` filter for this.
+- ✅ **`TriggerInstance.extra_metadata`** — same opaque-client-space contract as `Connection.extra_metadata`,
+  but (unlike Connection's, write-once) editable after subscribe time via `PATCH /triggers/:id`. Capped at
+  4096 bytes of serialized JSON (`MAX_EXTRA_METADATA_BYTES`, `trigger_routes.ts`) — TODO(ask) in
+  `types.ts`/`trigger_routes.ts`: the number is a guess, and whether `Connection.extra_metadata` should get
+  the same cap for consistency. New `extra_metadata` jsonb column on `trigger_instances`
+  (`src/db/migrations/0002_trigger_instance_extra_metadata.sql`), applied to the real local Postgres.
+- ✅ **`GET /triggers/instances/{id}/logs?user_id=&limit=`** (`trigger_routes.ts`) and MCP's
+  `list_trigger_logs` — what a trigger instance has actually fired: status, the `webhook_url` each attempt
+  went to, the error if any, and a `resendable` flag. Store: `triggerLogStore.listByInstance()`,
+  `.get(log_id)`.
+- ✅ **`POST /triggers/logs/{log_id}/resend`** (`trigger_routes.ts`) and MCP's `resend_trigger_webhook` —
+  Stripe-CLI-`events resend`-style: re-POSTs an already-captured delivery's exact payload (same event
+  `id`/`timestamp`, a resend not a new event) to the trigger instance's CURRENT `webhook_url` (which may
+  differ from what the original row recorded, if it's since changed — per this exact behavior having
+  already been decided back in Phase 3's original TODO note). Only works on a row with a captured
+  `payload` — poll-attempt rows never had one. `src/core/scheduler.ts`'s `deliverEvent()` now stores the
+  full envelope (`payload`) and the `webhook_url` it was sent to on every delivery row, success or failure
+  (a failed delivery is exactly the case someone wants to resend); `resendDelivery()` does the actual
+  re-POST + writes its own new (itself resendable) log row. New `webhook_url`/`payload` columns on
+  `trigger_logs` (`src/db/migrations/0003_trigger_logs_webhook_url_payload.sql`), applied to the real local Postgres.
+  `GET /admin/trigger_logs` also gained `webhook_url`/`resendable` for the same reason.
+- ✅ Verified live, real Postgres, real HTTP round trip (not mocked): seeded a user/connection/trigger
+  instance directly against the store, ran a real `deliverEvent()` against an unreachable URL (captured a
+  real `ConnectionRefused` failure row, `resendable: true`), started a real local HTTP receiver, called
+  `POST /triggers/logs/{log_id}/resend` through the real REST API — it re-POSTed and actually reached the
+  receiver (`status: "success"`), and the resend itself appears as a new log row via
+  `GET /triggers/instances/{id}/logs`. Also verified the ownership check: a mismatched `user_id` on either
+  the logs-list or resend route returns 404, not the other user's data. All test rows cleaned up from the
+  database afterward.
+- TODO(ask): no MCP tool yet to edit a subscribed instance's `extra_metadata` after creation (REST has
+  `PATCH /triggers/:id`) — add one if an agent actually needs to revise notes on an existing subscription.
+- TODO: `GET /triggers/instances/{id}/logs` has the same flat-`limit`-no-cursor pagination gap as
+  `/admin/trigger_logs` / `/admin/logs`. **[Low priority for now]**
+
+## Phase 4.7 — Envelope cleanup + event-id lookup — ✅ DONE
+- ✅ **`type` is now the real dispatch key**, not a fixed placeholder: `deliverEvent()`'s envelope `type` used
+  to be the hardcoded literal `"trigger.message"` on every single delivery regardless of app/trigger — a
+  receiver couldn't `switch` on it at all. Now `type` is the actual trigger slug (`"gmail.new_email"`,
+  `"slack.new_message"`, ...), same role Stripe's `event.type` (`"invoice.paid"`) plays. Dropped the
+  now-redundant `metadata.trigger_slug` field it was duplicating.
+- ✅ **One id, not two**: `deliverEvent()` used to generate a separate `envelope.id` (`evt_...`, only ever
+  seen by the receiver) and a separate `trigger_logs.log_id` (`tlog_...`, only ever used internally) for
+  the same logical delivery. Unified to ONE `evt_...` id used as both — the id a receiver sees in a
+  delivered payload is the SAME id `GET /triggers/logs/{log_id}` and `POST /triggers/logs/{log_id}/resend`
+  key off of, Stripe-`evt_...`-shaped. `resendDelivery()` still mints its own fresh `evt_...` id for the
+  new attempt row it creates (a resend is a new delivery ATTEMPT with its own id, even though the payload
+  it carries keeps embedding the ORIGINAL event's id unchanged — same distinction Stripe draws between an
+  event and its delivery attempts). Poll-attempt rows (`logPollRun`) keep the `tlog_...` prefix — they're
+  not resendable events with a body, so a different prefix is a real, not cosmetic, signal.
+- ✅ **`GET /triggers/logs/{log_id}`** (`trigger_routes.ts`) and MCP's `get_trigger_log` — ~ Stripe's
+  `GET /v1/events/{id}`: pass the `evt_...` id back and get that one event's full body, including
+  `payload` (which the logs-LIST route deliberately omits, same as REST's `resendable`-flag pattern).
+  `user_id`-ownership-checked the same way every other client-facing trigger route is.
+- ✅ Migrations `0002`/`0003` renamed from drizzle-kit's random adjective-noun names
+  (`0002_huge_invisible_woman.sql`, `0003_magenta_slyde.sql`) to descriptive ones
+  (`0002_trigger_instance_extra_metadata.sql`, `0003_trigger_logs_webhook_url_payload.sql`) — safe post-apply
+  since `drizzle.__drizzle_migrations` tracks applied migrations by content hash + timestamp, not filename;
+  verified live (`bun run db:migrate` after the rename did not attempt to re-apply either one). Journal
+  `tag` fields (`meta/_journal.json`) updated to match; `when` timestamps left untouched.
+- ✅ Verified live: real `deliverEvent()` call against a real local HTTP receiver — confirmed the delivered
+  body on the wire has `type: "gmail.new_email"` (not the old placeholder) and `id` equal to the resulting
+  `trigger_logs` row's `log_id`. `bun run typecheck` and `bun test` clean throughout.
+
 ## Phase 5 — Multi-tenant / bring-your-own OAuth app — NOT STARTED
-- Let a caller override the shared `.env` OAuth app with their own client_id/secret (Auth Config concept, per `research/auth-patterns.md` #1 and #3).
+- Let a caller override the shared `.env` OAuth app with their own client_id/secret (Auth Config concept, per `docs/research/auth-patterns.md` #1 and #3).
 - `auth_configs` table separated from `connected_accounts` (Composio-style split) — matches the real gap noted in `tool_provider.http`'s Composio comparison (no auth-config API exists here at all yet).
 
 ## Phase 6 — Outbound trigger delivery + more apps — NOT STARTED
-- Decide fan-in single webhook per consumer vs per-trigger endpoint (`research/triggers-patterns.md` — currently leaning fan-in).
+- Decide fan-in single webhook per consumer vs per-trigger endpoint (`docs/research/triggers-patterns.md` — currently leaning fan-in).
 - HMAC signing for outbound deliveries — not needed for now, per spec (Phase 3). No retry/circuit-breaker either — explicitly decided against, `trigger_logs` is the audit trail instead.
 - Add more Apps beyond Gmail/Slack/SerpApi once the shape is proven.
 
 ## Phase-MCP-1 — stdio MCP server, meta-tools — ✅ DONE
-Full guide: `MCP_GUIDE.md`. Research: `research/mcp-connect-flow.md` (Composio/Pipedream pattern,
-confirmed from their own docs) + `research/mcp-sdk-notes.md` (the real `@modelcontextprotocol/sdk`
+Full guide: `MCP_GUIDE.md`. Research: `docs/research/mcp-connect-flow.md` (Composio/Pipedream pattern,
+confirmed from their own docs) + `docs/research/mcp-sdk-notes.md` (the real `@modelcontextprotocol/sdk`
 mechanics, confirmed against the installed 1.30.0 package's own `.d.ts`).
 - ✅ Three meta-tools, not one MCP tool per action, per the confirmed Composio/Pipedream shape:
   `search_tools` (keyword match over `listApps()`, `src/core/registry.ts` — fine at ~10 actions, per spec),
   `manage_connection` (get-or-create a connection, same three states `POST /connections` already returns),
-  `execute_tool` (same dispatch as `POST /actions/:app/:action`, reusing `ensureFreshConnection` +
+  `execute_tool` (same dispatch as `POST /actions/execute/:tool_slug`, reusing `ensureFreshConnection` +
   `actionLogStore`). Schemas: `src/mcp/types.ts`. Implementations: `src/mcp/metaTools.ts` — real, calls the
   same store/registry/lib functions the REST routes call (not the routes themselves; see `MCP_GUIDE.md`'s
   "why a separate layer" section for why this isn't built as new REST routes).

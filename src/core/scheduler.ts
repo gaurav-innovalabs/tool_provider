@@ -12,10 +12,16 @@
 // "is anything due yet", an internal implementation detail, never a per-trigger cadence.
 //
 // Envelope shape deliberately mirrors Composio's real webhook payload (confirmed from their docs during
-// R&D, see research/triggers-patterns.md): { id, type, metadata: {...}, data, timestamp }.
+// R&D, see docs/research/triggers-patterns.md): { id, type, metadata: {...}, data, timestamp }. `type` is the
+// actual trigger slug (e.g. "gmail.new_email") — the real dispatch key a receiver switches on, same as
+// Stripe's `event.type` (e.g. "invoice.paid") — not a fixed placeholder string every trigger shares.
+// `metadata` carries trigger_instance_id/connection_id/user_id/app PLUS the instance's own `extra_metadata`
+// (the client's opaque notes space, set at subscribe time or edited via PATCH /triggers/:id) — echoed back
+// on every delivery, same idea as Stripe echoing an object's `metadata` on its webhook events, so a
+// receiver can route/identify without calling back into this API.
 //
 // TODO(ask): no delivery signing yet (Nango/Composio both HMAC-sign outbound webhooks, per
-// research/triggers-patterns.md's "Outbound webhook delivery hardening" section) — a receiver currently
+// docs/research/triggers-patterns.md's "Outbound webhook delivery hardening" section) — a receiver currently
 // has no way to verify a POST actually came from us. Worth adding before this is used for anything beyond
 // local testing.
 // No retry/circuit-breaker on delivery failure, by explicit decision ("no need to retry at all, just
@@ -28,7 +34,7 @@
 import { triggerInstanceStore, connectionStore, triggerLogStore } from "./store";
 import { getApp } from "./registry";
 import { ensureFreshConnection } from "./tokenRefresh";
-import type { TriggerInstance } from "../types";
+import type { TriggerInstance, TriggerLogEntry } from "../types";
 
 // How often this process checks whether anything is due — NOT a poll interval, just loop granularity.
 // 2 min, per spec: "after every 2 min -> check all triggers last_run > 8 min do run it." An instance
@@ -52,17 +58,26 @@ function isDue(instance: TriggerInstance): boolean {
 // Exported for direct testing — proving delivery works against a real HTTP receiver doesn't require a
 // real Gmail/Slack success case to get there. Every attempt (success or failure) writes one row to
 // trigger_logs — no retry, that row is the whole story.
-export async function deliverEvent(webhookUrl: string, triggerSlug: string, triggerInstanceId: string, connectionId: string, userId: string, app: string, data: unknown): Promise<void> {
-  const triggerKey = triggerSlug.startsWith(`${app}.`) ? triggerSlug.slice(app.length + 1) : triggerSlug;
+//
+// Takes the full `instance` (not separate app/connection_id/user_id/... params — every call site already
+// has it in hand) so the delivered envelope can echo back `instance.extra_metadata`, the same "client's own
+// space, we never interpret it, we just hand it back to you" contract Stripe's webhook events follow for
+// object metadata — the receiving endpoint can use it to route/identify without a lookup back to us.
+export async function deliverEvent(instance: TriggerInstance, data: unknown): Promise<void> {
+  // ONE id for both the envelope's own `id` (what the receiver sees) and this row's `log_id` (what
+  // GET /triggers/logs/{id} and POST /triggers/logs/{id}/resend key off of) — no separate internal
+  // row-id vs. external event-id to keep in sync. `evt_...` (not `tlog_...`) since this IS the event id,
+  // Stripe-`evt_...`-shaped: pass the id back from any delivery you were shown and you get the same row.
+  const id = `evt_${crypto.randomUUID()}`;
   const envelope = {
-    id: `evt_${crypto.randomUUID()}`,
-    type: "trigger.message",
+    id,
+    type: `${instance.app}.${instance.trigger_key}`, // the dispatch key, e.g. "gmail.new_email" — see header comment
     metadata: {
-      trigger_slug: triggerSlug,
-      trigger_instance_id: triggerInstanceId,
-      connection_id: connectionId,
-      user_id: userId,
-      app,
+      trigger_instance_id: instance.trigger_instance_id,
+      connection_id: instance.connection_id,
+      user_id: instance.user_id,
+      app: instance.app,
+      extra_metadata: instance.extra_metadata,
     },
     data,
     timestamp: new Date().toISOString(),
@@ -71,7 +86,7 @@ export async function deliverEvent(webhookUrl: string, triggerSlug: string, trig
   let status: "success" | "error" = "success";
   let error: string | undefined;
   try {
-    const res = await fetch(webhookUrl, {
+    const res = await fetch(instance.webhook_url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(envelope),
@@ -79,25 +94,74 @@ export async function deliverEvent(webhookUrl: string, triggerSlug: string, trig
     if (!res.ok) {
       status = "error";
       error = `HTTP ${res.status}`;
-      console.error(`[scheduler] webhook delivery to ${webhookUrl} failed (${res.status}) for trigger_instance ${triggerInstanceId}`);
+      console.error(`[scheduler] webhook delivery to ${instance.webhook_url} failed (${res.status}) for trigger_instance ${instance.trigger_instance_id}`);
     }
   } catch (err) {
     status = "error";
     error = err instanceof Error ? err.message : String(err);
-    console.error(`[scheduler] webhook delivery to ${webhookUrl} threw for trigger_instance ${triggerInstanceId}:`, err);
+    console.error(`[scheduler] webhook delivery to ${instance.webhook_url} threw for trigger_instance ${instance.trigger_instance_id}:`, err);
   }
 
   await triggerLogStore.append({
-    log_id: `tlog_${crypto.randomUUID()}`,
-    trigger_instance_id: triggerInstanceId,
-    connection_id: connectionId,
-    user_id: userId,
-    app,
-    trigger_key: triggerKey,
+    log_id: id,
+    trigger_instance_id: instance.trigger_instance_id,
+    connection_id: instance.connection_id,
+    user_id: instance.user_id,
+    app: instance.app,
+    trigger_key: instance.trigger_key,
     status,
     ran_at: new Date().toISOString(),
     error,
+    // Stored regardless of success/failure — a failed delivery is exactly the case someone wants to
+    // resend once the receiving endpoint is fixed, same as Stripe's dashboard showing failed deliveries
+    // with a "Resend" button. See trigger_routes.ts's GET/POST /triggers/logs/{id}(/resend).
+    webhook_url: instance.webhook_url,
+    payload: envelope,
   });
+}
+
+// Stripe-CLI-`events resend`-style replay: re-POSTs an ALREADY-CAPTURED envelope BYTE-FOR-BYTE (same
+// embedded event `id`/`timestamp` as the original — this is a resend of that event's content, not a new
+// event) to the trigger instance's CURRENT webhook_url, which may differ from the log row's own stored
+// `webhook_url` if it's been updated since — same intent as PHASES.md Phase 3's original resend note
+// ("re-POST to the instance's CURRENT webhook_url"). Writes its OWN new trigger_logs row — a new delivery
+// ATTEMPT gets its own `evt_...` id (same scheme as deliverEvent), even though the payload it carries still
+// embeds the original event's id — so this attempt is itself independently resendable, and shows up in the
+// instance's history alongside the original. Caller (trigger_routes.ts) is responsible for the ownership
+// check and for confirming the source log actually has a `payload` to resend in the first place.
+export async function resendDelivery(instance: TriggerInstance, payload: unknown): Promise<TriggerLogEntry> {
+  let status: "success" | "error" = "success";
+  let error: string | undefined;
+  try {
+    const res = await fetch(instance.webhook_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      status = "error";
+      error = `HTTP ${res.status}`;
+    }
+  } catch (err) {
+    status = "error";
+    error = err instanceof Error ? err.message : String(err);
+  }
+
+  const logEntry: TriggerLogEntry = {
+    log_id: `evt_${crypto.randomUUID()}`,
+    trigger_instance_id: instance.trigger_instance_id,
+    connection_id: instance.connection_id,
+    user_id: instance.user_id,
+    app: instance.app,
+    trigger_key: instance.trigger_key,
+    status,
+    ran_at: new Date().toISOString(),
+    error,
+    webhook_url: instance.webhook_url,
+    payload,
+  };
+  await triggerLogStore.append(logEntry);
+  return logEntry;
 }
 
 // One row per poll ATTEMPT (distinct from deliverEvent's per-event delivery rows) — records that the
@@ -144,7 +208,7 @@ export async function runTriggerPollCycle(): Promise<void> {
         const { events, nextCursor } = await trigger.poll(connection, instance.cursor);
 
         for (const event of events) {
-          await deliverEvent(instance.webhook_url, `${instance.app}.${instance.trigger_key}`, instance.trigger_instance_id, instance.connection_id, instance.user_id, instance.app, event);
+          await deliverEvent(instance, event);
         }
 
         await triggerInstanceStore.update(instance.trigger_instance_id, {

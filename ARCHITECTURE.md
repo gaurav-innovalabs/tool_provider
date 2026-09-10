@@ -1,12 +1,12 @@
 # Architecture (pseudo-code phase)
 
-Reference: `../research/` (auth-patterns.md, triggers-patterns.md, gmail-deep-dive.md, comparison.md). This doc is the terminology + flow contract that all `src/` skeleton files follow. See `PHASES.md` for what's real vs stubbed right now.
+Reference: [`docs/research/`](docs/research/README.md) (auth-patterns.md, triggers-patterns.md, gmail-deep-dive.md, comparison.md). This doc is the terminology + flow contract that all `src/` skeleton files follow. See `PHASES.md` for what's real vs stubbed right now.
 
 ## Terminology
 
 - **App** — a third-party service definition. e.g. `gmail`, `slack`. Declares: id, display name, auth type, OAuth scopes/endpoints, its list of Actions, its list of Triggers. Lives in `src/components/<app>/app.ts` — "components" naming taken from Pipedream (see `src/components/TODO.md` for the structural R&D on this).
 - **Action** — one callable "tool" a caller/agent can invoke against a Connection. e.g. `gmail.send_email`, `slack.post_message`. Small input schema, one `run(connection, input)` function. Deliberately kept few-and-useful per app (Pipedream-style), not an exhaustive 1:1 wrap of the entire third-party API (Composio-style).
-- **Trigger** — an event source definition. e.g. `gmail.new_email`, `slack.new_message`. Either `poll` (we call the API on an interval, diff since a stored cursor) or `webhook` (third party pushes to us). See `research/triggers-patterns.md`.
+- **Trigger** — an event source definition. e.g. `gmail.new_email`, `slack.new_message`. Either `poll` (we call the API on an interval, diff since a stored cursor) or `webhook` (third party pushes to us). See `docs/research/triggers-patterns.md`.
 - **User** — our internal identity for whoever the client is acting on behalf of. Created via `createUser`, holds an opaque `user_metadata` blob the client passed at creation time — we don't interpret it, just store and return it.
 - **Connection** — the result of a completed OAuth flow: one `user_id` + one `app`, holding the credential. Identified by `connection_id`. This is what every Action/Trigger call is scoped to.
 
@@ -28,9 +28,11 @@ Reference: `../research/` (auth-patterns.md, triggers-patterns.md, gmail-deep-di
    Server  -> stores tokens on the connection row, status="active"
    Server  -> redirects/responds per TODO in src/lib/oauth.ts
 
-4. Client -> POST /actions/:app/:actionKey { connection_id, input }
+4. Client -> POST /actions/execute/:tool_slug { connection_id, input }  (tool_slug = APP_ACTIONKEY,
+   Composio-shaped — see src/core/registry.ts's toolSlug()/findByToolSlug())
+   Server  -> resolves tool_slug back to {app, action}
    Server  -> loads connection by connection_id, loads its credential
-   Server  -> looks up the App's Action by actionKey, calls run(connection, input)
+   Server  -> calls run(connection, input)
    Server  -> returns the Action's result
 
 5. (Phase 3) Client -> POST /triggers/:app/:triggerKey/subscribe { connection_id, ...delivery config }
@@ -40,7 +42,7 @@ Reference: `../research/` (auth-patterns.md, triggers-patterns.md, gmail-deep-di
 
 ## Why `user` and `connection` are separate
 
-A `user_id` can end up with multiple `connection_id`s (Gmail *and* Slack, or two Gmail accounts later) — metadata about *who this is* lives once on the user; the OAuth credential + its status lives per connection. This mirrors the Auth Config / Connected Account split in `research/auth-patterns.md` #1, simplified for Phase 1 (no Auth Config table yet since we're not supporting bring-your-own OAuth app until Phase 5 — the "Auth Config" for now is just the app's `.env` entry).
+A `user_id` can end up with multiple `connection_id`s (Gmail *and* Slack, or two Gmail accounts later) — metadata about *who this is* lives once on the user; the OAuth credential + its status lives per connection. This mirrors the Auth Config / Connected Account split in `docs/research/auth-patterns.md` #1, simplified for Phase 1 (no Auth Config table yet since we're not supporting bring-your-own OAuth app until Phase 5 — the "Auth Config" for now is just the app's `.env` entry).
 
 ## File map (Phase 1)
 
@@ -82,7 +84,7 @@ src/
     admin_routes.ts                # GET /admin/users, /admin/triggers, /admin/logs — read-only
     user_routes.ts                  # POST /users
     connection_routes.ts             # POST /connections, GET /connections/:id (client-facing half only)
-    action_routes.ts                  # POST /actions/:app/:action
+    action_routes.ts                  # GET /actions, GET /actions/:tool_slug, POST /actions/execute/:tool_slug
     trigger_routes.ts                  # POST /triggers/:app/:trigger/subscribe (subscription mgmt only)
     webhook_routes.ts                   # GET /oauth/callback/:app + (Phase 6) inbound trigger webhooks —
                                           # grouped because both are "external service calls us", see file header

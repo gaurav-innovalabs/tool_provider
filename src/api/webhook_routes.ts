@@ -53,7 +53,7 @@ async function deliverSlackMessageEvent(teamId: string, rawEvent: NonNullable<Sl
     const instances = activeInstances.filter((i) => i.connection_id === connection.connection_id && i.trigger_key === "new_message");
     for (const instance of instances) {
       for (const event of normalizedEvents) {
-        await deliverEvent(instance.webhook_url, "slack.new_message", instance.trigger_instance_id, instance.connection_id, instance.user_id, "slack", event);
+        await deliverEvent(instance, event);
       }
     }
   }
@@ -108,7 +108,7 @@ export const webhookRoutes = {
     },
   },
 
-  // Real, per the fan-in model already leaned toward in research/triggers-patterns.md — one Slack Events
+  // Real, per the fan-in model already leaned toward in docs/research/triggers-patterns.md — one Slack Events
   // API subscription URL for the whole app, not one per connection or trigger instance. Register this
   // exact URL (BASE_URL + this path) as the Request URL under Slack app config -> Event Subscriptions.
   "/webhooks/slack/events": {

@@ -53,6 +53,22 @@ function fieldFormPage(app: AppDefinition, token: string, errorMessage?: string)
 // Client-facing, internal-only — gated with the bearer token in server.ts (src/lib/apiAuth.ts).
 export const connectionRoutes = {
   "/connections": {
+    // Client-facing "which connections have I created" — ~ Composio's GET /connected_accounts (filtered to
+    // one user, since we have no admin-only "list every connection across every user" concept on this
+    // route; that's GET /admin/users instead). Closes half of tool_provider.http's documented
+    // "List/delete/disable a Connection" gap — list existed nowhere before this, not even admin-side beyond
+    // the nested shape GET /admin/users already returns.
+    GET: async (req: Request) => {
+      const url = new URL(req.url);
+      const user_id = url.searchParams.get("user_id");
+      if (!user_id) {
+        return Response.json({ error: "user_id query param is required" }, { status: 400 });
+      }
+      const app = url.searchParams.get("app") ?? undefined;
+      const connections = await connectionStore.listByUser(user_id, app);
+      return Response.json({ connections: connections.map(redact) });
+    },
+
     POST: async (req: Request) => {
       try {
         const body = requestBody.parse(await req.json());

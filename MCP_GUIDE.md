@@ -2,8 +2,8 @@
 
 How to expose this tool provider as an actual MCP server, Composio-Tool-Router-style: a small fixed set of
 meta-tools instead of one MCP tool per action, `user_id` bound once, "not connected" comes back as a normal
-tool result with a connect link instead of an error. Design research: `research/mcp-connect-flow.md`
-(Composio + Pipedream, confirmed from their own docs) and `research/mcp-sdk-notes.md` (the actual TS SDK).
+tool result with a connect link instead of an error. Design research: `docs/research/mcp-connect-flow.md`
+(Composio + Pipedream, confirmed from their own docs) and `docs/research/mcp-sdk-notes.md` (the actual TS SDK).
 Phase tracking: `PHASES.md`'s Phase-MCP section — this file is the "how", that file is the "what's real".
 
 ## Why a separate `src/mcp/` layer, not new REST routes
@@ -15,7 +15,7 @@ handler's signature is `Request -> Response`, not a callable function). If a thi
 same "get-or-create connection" / "run an action for a user" logic, factor it into a shared `core/*.ts`
 helper then — not worth it for two call sites yet.
 
-## The eleven meta-tools
+## The twelve meta-tools
 
 | Tool | Wraps | Not-connected behavior |
 |---|---|---|
@@ -29,14 +29,16 @@ helper then — not worth it for two call sites yet.
 | `subscribe_trigger` | Same as `POST /triggers/:app/:trigger/subscribe`, but resolves the connection from `user_id`+`app` instead of requiring a `connection_id` up front | Returns `{status:"not_connected", connect_url}` instead of a 409 |
 | `list_trigger_instances` | Same as `GET /triggers/instances?user_id=&app=` — subscribed instances, not available types | n/a |
 | `list_trigger_logs` | Same as `GET /triggers/instances/{id}/logs` — Stripe-CLI `events list`-style run history | n/a |
+| `get_trigger_log` | Same as `GET /triggers/logs/{log_id}` — one event's full body (payload included), Stripe `GET /v1/events/{id}`-style | n/a |
 | `resend_trigger_webhook` | Same as `POST /triggers/logs/{log_id}/resend` — Stripe-CLI `events resend`-style replay | n/a |
 
 `search_tools`/`get_tool_schema`/`manage_connection`/`execute_tool`/`list_triggers`/`subscribe_trigger` are
-the confirmed Composio/Pipedream pattern (`research/mcp-connect-flow.md`); `wait_for_connection` fills the
+the confirmed Composio/Pipedream pattern (`docs/research/mcp-connect-flow.md`); `wait_for_connection` fills the
 one real gap in that pattern — without it, an agent has no way to know a connection actually completed
 other than blindly retrying. `list_connections`/`list_trigger_instances`/`list_trigger_logs`/
-`resend_trigger_webhook` (Phase 4.6, `PHASES.md`) close the "what have I already connected/subscribed, what
-has it actually fired, can I replay one" gap — ownership-checked against `userId` the same way REST checks
+`get_trigger_log`/`resend_trigger_webhook` (Phase 4.6, `PHASES.md`) close the "what have I already
+connected/subscribed, what has it actually fired, can I read one back and replay it" gap —
+ownership-checked against `userId` the same way REST checks
 an explicit `user_id`.
 
 Schemas: `src/mcp/types.ts`. Implementations: `src/mcp/metaTools.ts` (real, not stubbed — reuses

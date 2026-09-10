@@ -1,56 +1,135 @@
 // OpenAPI 3.0 spec for the tool_provider API. Hand-written for the routes that don't change often
-// (users/connections/admin), but the `/actions/{app}/{key}` entries are GENERATED from the real
-// ActionDefinition.input/output zod schemas in src/components/*/actions/*.ts via zod's native
-// `z.toJSONSchema()` (zod v4+, no extra dependency) — so action docs cannot drift out of sync with the
-// actual code the way hand-duplicated schemas would. If you add/change an action, this file updates
-// itself; nothing here needs editing for that.
+// (users/connections/admin/actions), except the `tool_slug` enum below (and each entry's one-line
+// description) which is GENERATED from the real registry so it can't drift out of sync with the actual
+// actions in code.
+//
+// Action routes are Composio-standard shape, NOT one hand-shaped OpenAPI path per action: a hand-shaped
+// path per action (`/actions/gmail/list_recent_emails`, `/actions/slack/post_message`, ...) means every
+// new action grows /openapi.json by a whole path object — real bloat, and it's not how Composio/Pipedream
+// actually document their own tool-execute surface (confirmed against .idea/composio.http's real v3 API:
+// ONE `POST /tools/execute/{tool_slug}` path, `tool_slug` a flat identifier like `SLACK_FIND_CHANNELS` —
+// not two path segments). This file mirrors that: one execute path, one list path, one per-tool-schema
+// path — see src/api/action_routes.ts for the route handlers. Per-action input/output schemas are still
+// generated live from each ActionDefinition's real zod schema (z.toJSONSchema(), zod v4+, no extra
+// dependency), just served on demand via `GET /actions/{tool_slug}` instead of inlined into every path.
 //
 // See requests.http for a Composio-API-reference comparison of what's implemented, missing, and extra
 // relative to Composio's real v3 API (fetched from https://backend.composio.dev/api/v3/openapi.json).
 
 import { z } from "zod";
-import { listApps } from "./core/registry";
+import { listApps, toolSlug } from "./core/registry";
 import type { ActionDefinition } from "./types";
 
+function allTools() {
+  return listApps().flatMap((app) =>
+    (app.actions as ActionDefinition[]).map((action) => ({
+      tool_slug: toolSlug(app.id, action.key),
+      app: app.id,
+      action: action.key,
+      description: action.description,
+    })),
+  );
+}
+
 function actionPaths() {
-  const paths: Record<string, unknown> = {};
-  for (const app of listApps()) {
-    for (const action of app.actions as ActionDefinition[]) {
-      paths[`/actions/${app.id}/${action.key}`] = {
-        post: {
-          tags: ["actions"],
-          summary: `${app.name}: ${action.description}`,
-          description: `Runs \`${app.id}.${action.key}\`. \`input\` is validated against this action's real zod schema (shown below) before it runs, and the result is validated against its output schema before it's returned.`,
-          requestBody: {
-            required: true,
+  const tools = allTools();
+  const toolSlugSchema = { type: "string", enum: tools.map((t) => t.tool_slug), description: "One flat identifier per action — see GET /actions for the current full list with descriptions." };
+
+  return {
+    "/actions": {
+      get: {
+        tags: ["actions"],
+        summary: "List/search available tools",
+        description: "~ Composio's `GET /tools`. Returns every real action currently in the registry — cannot list a tool that doesn't exist in code. Optional `?q=` filters by a case-insensitive word match against `tool_slug` + description.",
+        parameters: [{ name: "q", in: "query", required: false, schema: { type: "string" }, description: "Free-text filter, e.g. \"gmail\" or \"send email\"." }],
+        responses: {
+          "200": {
+            description: "Matching tools (all of them if `q` is omitted or matches nothing).",
             content: {
               "application/json": {
                 schema: {
                   type: "object",
                   properties: {
-                    connection_id: { type: "string", description: `Must be an active connection to "${app.id}".` },
-                    input: z.toJSONSchema(action.input),
+                    tools: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          tool_slug: toolSlugSchema,
+                          app: { type: "string" },
+                          action: { type: "string" },
+                          description: { type: "string" },
+                        },
+                      },
+                    },
                   },
-                  required: ["connection_id", "input"],
                 },
               },
             },
           },
-          responses: {
-            "200": {
-              description: "Action result, matching this action's real output schema.",
-              content: { "application/json": { schema: z.toJSONSchema(action.output) } },
+        },
+      },
+    },
+    "/actions/{tool_slug}": {
+      get: {
+        tags: ["actions"],
+        summary: "Get one tool's real input/output schema",
+        description: "~ Composio's `GET /tools/{slug}`. `input_schema`/`output_schema` are this action's actual zod schemas (z.toJSONSchema()) — call this on demand for the one tool_slug you're about to execute, instead of every action's schema being pre-inlined into every path.",
+        parameters: [{ name: "tool_slug", in: "path", required: true, schema: toolSlugSchema }],
+        responses: {
+          "200": {
+            description: "Tool schema.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    tool_slug: toolSlugSchema,
+                    app: { type: "string" },
+                    action: { type: "string" },
+                    description: { type: "string" },
+                    input_schema: { type: "object", description: "This action's real zod input schema, as JSON Schema." },
+                    output_schema: { type: "object", description: "This action's real zod output schema, as JSON Schema." },
+                  },
+                },
+              },
             },
-            "400": { description: "Input failed this action's schema." },
-            "404": { description: "Unknown connection_id." },
-            "409": { description: "Connection exists but isn't active yet." },
-            "500": { description: "The action ran but the underlying API call failed (message includes the provider's real error)." },
+          },
+          "404": { description: "Unknown tool_slug." },
+        },
+      },
+    },
+    "/actions/execute/{tool_slug}": {
+      post: {
+        tags: ["actions"],
+        summary: "Execute a tool",
+        description: "~ Composio's `POST /tools/execute/{tool_slug}`. `input` is validated against the real action's zod schema (fetch it first via `GET /actions/{tool_slug}`) before it runs, and the result is validated against its output schema before it's returned.",
+        parameters: [{ name: "tool_slug", in: "path", required: true, schema: toolSlugSchema }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  connection_id: { type: "string", description: "Must be an active connection to this tool_slug's app." },
+                  input: { type: "object", description: "This action's own input — shape varies per tool_slug, see GET /actions/{tool_slug}." },
+                },
+                required: ["connection_id", "input"],
+              },
+            },
           },
         },
-      };
-    }
-  }
-  return paths;
+        responses: {
+          "200": { description: "Action result, matching this action's real output schema (GET /actions/{tool_slug})." },
+          "400": { description: "Input failed this action's schema." },
+          "404": { description: "Unknown tool_slug, or unknown connection_id." },
+          "409": { description: "Connection exists but isn't active yet." },
+          "500": { description: "The action ran but the underlying API call failed (message includes the provider's real error)." },
+        },
+      },
+    },
+  };
 }
 
 export const openApiSpec = {
@@ -70,8 +149,8 @@ export const openApiSpec = {
   tags: [
     { name: "users", description: "Client-facing user lifecycle." },
     { name: "connections", description: "Client-facing connection lifecycle — request, check status, and (oauth2 only) the browser-facing authorize redirect." },
-    { name: "actions", description: "Invoke an App's Action against a Connection. One path per real action, schemas generated from the action's own zod definitions." },
-    { name: "triggers", description: "Trigger subscription management. Not implemented yet (Phase 3) — routes exist and return 'not implemented'." },
+    { name: "actions", description: "Discover and invoke tools (App Actions) by tool_slug — Composio-shaped: GET /actions (list/search), GET /actions/{tool_slug} (schema), POST /actions/execute/{tool_slug} (run). One generic path per verb, not one path per action." },
+    { name: "triggers", description: "Discover trigger types, subscribe/unsubscribe, and list/edit a user's own trigger instances." },
     { name: "webhooks", description: "Inbound calls from external providers (OAuth redirect). Not gated by our bearer token — see src/api/webhook_routes.ts." },
     { name: "admin", description: "Internal, read-only inspection API. No UI — API only, per spec. Not implemented yet — routes exist and return 'not implemented'." },
   ],
@@ -112,6 +191,22 @@ export const openApiSpec = {
       },
     },
     "/connections": {
+      get: {
+        tags: ["connections"],
+        summary: "List a user's connections (~ Composio's GET /connected_accounts, filtered to one user)",
+        description: "Client-facing 'what have I connected' — required `user_id`, optional `app` to narrow to one app. Secrets always redacted, same as GET /connections/{id}.",
+        parameters: [
+          { name: "user_id", in: "query", required: true, schema: { type: "string" } },
+          { name: "app", in: "query", required: false, schema: { type: "string" }, example: "gmail" },
+        ],
+        responses: {
+          "200": {
+            description: "This user's connections (all apps, or just `app` if given).",
+            content: { "application/json": { schema: { type: "object", properties: { connections: { type: "array", items: { $ref: "#/components/schemas/Connection" } } } } } },
+          },
+          "400": { description: "Missing user_id." },
+        },
+      },
       post: {
         tags: ["connections"],
         summary: "Request a new connection",
@@ -225,11 +320,115 @@ export const openApiSpec = {
       },
     },
     ...actionPaths(),
+    "/triggers": {
+      get: {
+        tags: ["triggers"],
+        summary: "List available trigger TYPES (~ Composio's GET /triggers_types)",
+        description: "Every real trigger currently in the registry — generated live, same discipline as GET /actions. Distinct from GET /triggers/instances below: this lists what CAN be subscribed to, not what a user already has subscribed.",
+        responses: {
+          "200": {
+            description: "Trigger types.",
+            content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/TriggerType" } } } },
+          },
+        },
+      },
+    },
+    "/triggers/instances": {
+      get: {
+        tags: ["triggers"],
+        summary: "List a user's subscribed trigger instances",
+        description: "Client-facing 'which triggers have I actually subscribed to' — required `user_id`, optional `app` to narrow.",
+        parameters: [
+          { name: "user_id", in: "query", required: true, schema: { type: "string" } },
+          { name: "app", in: "query", required: false, schema: { type: "string" }, example: "gmail" },
+        ],
+        responses: {
+          "200": {
+            description: "This user's trigger instances.",
+            content: { "application/json": { schema: { type: "object", properties: { trigger_instances: { type: "array", items: { $ref: "#/components/schemas/TriggerInstance" } } } } } },
+          },
+          "400": { description: "Missing user_id." },
+        },
+      },
+    },
+    "/triggers/instances/{id}/logs": {
+      get: {
+        tags: ["triggers"],
+        summary: "What a trigger instance has actually fired (~ Stripe CLI's `events list`)",
+        description: "Every poll attempt and webhook delivery attempt for one instance, newest first — status, which webhook_url each attempt went to, the error if any, and `resendable` (whether POST /triggers/logs/{log_id}/resend will work on it). `user_id` required and checked against the instance's own owner.",
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" },
+          { name: "user_id", in: "query", required: true, schema: { type: "string" } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer", default: 50 } },
+        ],
+        responses: {
+          "200": {
+            description: "The instance's current status/webhook_url, plus its run history.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    trigger_instance: { type: "object", properties: { trigger_instance_id: { type: "string" }, status: { type: "string" }, webhook_url: { type: "string" } } },
+                    logs: { type: "array", items: { $ref: "#/components/schemas/TriggerLogEntry" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Missing user_id." },
+          "404": { description: "Unknown trigger instance, or it doesn't belong to user_id." },
+        },
+      },
+    },
+    "/triggers/logs/{log_id}": {
+      get: {
+        tags: ["triggers"],
+        summary: "Get one trigger event's full body (~ Stripe's `GET /v1/events/{id}`)",
+        description: "`log_id` IS the event id for a delivery row (`evt_...` — src/core/scheduler.ts's deliverEvent/resendDelivery generate one id, used as both the envelope's own `id` and this row's `log_id`). Returns the full row including `payload` — the actual delivered body — which GET /triggers/instances/{id}/logs deliberately omits. `user_id` required and checked against the log's own owner.",
+        parameters: [
+          { name: "log_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "user_id", in: "query", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "The full log row, including its payload.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/TriggerLogEntry" } } },
+          },
+          "400": { description: "Missing user_id." },
+          "404": { description: "Unknown trigger log, or it doesn't belong to user_id." },
+        },
+      },
+    },
+    "/triggers/logs/{log_id}/resend": {
+      post: {
+        tags: ["triggers"],
+        summary: "Resend a trigger delivery (~ Stripe CLI's `events resend`)",
+        description: "Re-POSTs an already-captured delivery's exact payload (same event id/timestamp — a resend, not a new event) to the trigger instance's CURRENT webhook_url, which may differ from the one the log row originally recorded if it's since been updated. Only works on a `resendable` log (one with a captured payload — webhook-delivery rows, not poll-attempt rows). Writes its own new trigger_logs row, itself resendable.",
+        parameters: [{ name: "log_id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { user_id: { type: "string", description: "Must match the log's own owner." } }, required: ["user_id"] },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "The NEW log row created by this resend attempt (not the original).",
+            content: { "application/json": { schema: { type: "object", properties: { log_id: { type: "string" }, status: { type: "string" }, ran_at: { type: "string" }, webhook_url: { type: "string" }, error: { type: "string" } } } } },
+          },
+          "400": { description: "Invalid body, or the log has no captured payload to resend." },
+          "404": { description: "Unknown trigger log, or it doesn't belong to user_id." },
+        },
+      },
+    },
     "/triggers/{app}/{trigger}/subscribe": {
       post: {
         tags: ["triggers"],
-        summary: "Subscribe to a Trigger — NOT IMPLEMENTED (Phase 3)",
-        description: "Creates a TriggerInstance for `connection_id`, picked up by the scheduler once one exists (Phase 3). Currently throws 'not implemented'.",
+        summary: "Subscribe to a Trigger",
+        description: "Creates a TriggerInstance for `connection_id`, picked up by the scheduler (poll-mode) or the matching webhook route (webhook-mode, e.g. Slack) once it exists.",
         parameters: [
           { name: "app", in: "path", required: true, schema: { type: "string" }, example: "gmail" },
           { name: "trigger", in: "path", required: true, schema: { type: "string" }, example: "new_email" },
@@ -240,20 +439,56 @@ export const openApiSpec = {
             "application/json": {
               schema: {
                 type: "object",
-                properties: { connection_id: { type: "string" } },
-                required: ["connection_id"],
-                additionalProperties: true,
-                description: "Plus delivery config, shape TBD (Phase 6).",
+                properties: {
+                  connection_id: { type: "string", description: "Must be an active connection to this `app`." },
+                  webhook_url: { type: "string", format: "uri", description: "Where we POST each event once this trigger fires." },
+                  poll_interval_ms: { type: "integer", description: "Override the trigger's own default. Poll-mode only; ignored for webhook-mode triggers." },
+                  extra_metadata: { type: "object", additionalProperties: true, description: "Opaque client space, e.g. { notes: '...' } — never read/interpreted by us, editable later via PATCH /triggers/{id}. Capped at 4096 bytes of JSON (see src/api/trigger_routes.ts's MAX_EXTRA_METADATA_BYTES)." },
+                },
+                required: ["connection_id", "webhook_url"],
               },
             },
           },
         },
         responses: {
-          "200": {
+          "201": {
             description: "Trigger instance created.",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/TriggerInstance" } } },
+            content: { "application/json": { schema: { type: "object", properties: { trigger_instance_id: { type: "string" }, status: { type: "string" }, poll_interval_ms: { type: "integer", nullable: true } } } } },
           },
-          "500": { description: "Not implemented yet." },
+          "400": { description: "Invalid body, or extra_metadata over the size cap." },
+          "404": { description: "Unknown app/trigger, or unknown connection_id." },
+          "409": { description: "Connection exists but isn't active yet." },
+        },
+      },
+    },
+    "/triggers/{id}": {
+      delete: {
+        tags: ["triggers"],
+        summary: "Unsubscribe (delete a trigger instance)",
+        description: "Real delete, not a soft-disable — no pause/resume yet (delete + re-subscribe is the only option, see PHASES.md Phase 3's open item). Its trigger_logs history is deleted with it (cascade).",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" }],
+        responses: {
+          "200": { description: "Deleted." },
+          "404": { description: "Unknown trigger instance." },
+        },
+      },
+      patch: {
+        tags: ["triggers"],
+        summary: "Update a trigger instance's extra_metadata",
+        description: "Metadata-only update — the client's own notes/tags space, editable after subscribe time (unlike Connection.extra_metadata, which is write-once). Everything else about the instance (webhook_url, poll_interval_ms, ...) is immutable post-subscribe: delete + re-subscribe is the only way to change those.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { extra_metadata: { type: "object", additionalProperties: true } }, required: ["extra_metadata"] },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "Updated." },
+          "400": { description: "Invalid body, or extra_metadata over the size cap." },
+          "404": { description: "Unknown trigger instance." },
         },
       },
     },
@@ -374,8 +609,38 @@ export const openApiSpec = {
           app: { type: "string" },
           trigger_key: { type: "string" },
           status: { type: "string", enum: ["active", "paused", "error"] },
+          webhook_url: { type: "string", format: "uri" },
+          poll_interval_ms: { type: "integer", nullable: true },
+          extra_metadata: { type: "object", additionalProperties: true, description: "Opaque client space — see PATCH /triggers/{id}." },
           created_at: { type: "string", format: "date-time" },
           updated_at: { type: "string", format: "date-time" },
+        },
+      },
+      TriggerType: {
+        type: "object",
+        description: "An available trigger DEFINITION (what CAN be subscribed to), not a TriggerInstance (what IS subscribed) — see GET /triggers vs GET /triggers/instances.",
+        properties: {
+          app: { type: "string" },
+          key: { type: "string" },
+          description: { type: "string" },
+          mode: { type: "string", enum: ["poll", "webhook"] },
+          default_poll_interval_ms: { type: "integer", nullable: true },
+          payload: { type: "object", nullable: true, description: "JSON Schema of the `data` object delivered to webhook_url, or null if not yet declared." },
+        },
+      },
+      TriggerLogEntry: {
+        type: "object",
+        description: "One row per trigger RUN — a poll attempt or a webhook delivery attempt. Only delivery attempts carry `webhook_url`/`payload` (poll attempts have neither) — that's what makes a row resendable, see POST /triggers/logs/{log_id}/resend.",
+        properties: {
+          log_id: { type: "string" },
+          trigger_instance_id: { type: "string" },
+          app: { type: "string" },
+          trigger_key: { type: "string" },
+          status: { type: "string", enum: ["success", "error"] },
+          ran_at: { type: "string", format: "date-time" },
+          error: { type: "string" },
+          webhook_url: { type: "string", format: "uri", description: "The URL this attempt was actually sent to (delivery rows only)." },
+          payload: { type: "object", description: "The exact envelope POSTed — {id, type, metadata, data, timestamp} (delivery rows only)." },
         },
       },
       ActionLogEntry: {

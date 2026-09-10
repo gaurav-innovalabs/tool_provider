@@ -11,7 +11,7 @@ import { eq, desc, and, lt } from "drizzle-orm";
 import { orm } from "../lib/postgres";
 import { users as usersTable, connections as connectionsTable, triggerInstances as triggerInstancesTable, actionLogs as actionLogsTable, triggerLogs as triggerLogsTable } from "../db/schema";
 import { encrypt, decrypt } from "../lib/cipher";
-import type { Connection, Secrets, User, UserId, ConnectionId, TriggerInstance, ActionLogEntry, TriggerLogEntry } from "../types";
+import type { AppId, Connection, Secrets, User, UserId, ConnectionId, TriggerInstance, ActionLogEntry, TriggerLogEntry } from "../types";
 
 function connectionRowToConnection(row: typeof connectionsTable.$inferSelect): Connection {
   return {
@@ -38,6 +38,7 @@ function triggerInstanceRowToTriggerInstance(row: typeof triggerInstancesTable.$
     webhook_url: row.webhook_url,
     poll_interval_ms: row.poll_interval_ms,
     cursor: row.cursor,
+    extra_metadata: row.extra_metadata as Record<string, unknown>,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -80,8 +81,11 @@ export const connectionStore = {
       throw new Error(`Cannot update unknown connection: ${connectionId}`);
     }
   },
-  async listByUser(userId: UserId): Promise<Connection[]> {
-    const rows = await orm.select().from(connectionsTable).where(eq(connectionsTable.user_id, userId));
+  async listByUser(userId: UserId, app?: AppId): Promise<Connection[]> {
+    const rows = await orm
+      .select()
+      .from(connectionsTable)
+      .where(app ? and(eq(connectionsTable.user_id, userId), eq(connectionsTable.app, app)) : eq(connectionsTable.user_id, userId));
     return rows.map(connectionRowToConnection);
   },
   async listAll(): Promise<Connection[]> {
@@ -131,6 +135,17 @@ export const triggerInstanceStore = {
     const rows = await orm.select().from(triggerInstancesTable);
     return rows.map(triggerInstanceRowToTriggerInstance);
   },
+  // Client-facing "my subscribed triggers" — distinct from listActive/listAll (admin/scheduler use), and
+  // distinct from GET /triggers (trigger_routes.ts), which lists available trigger TYPES, not a user's
+  // actual instances. Optional `app` narrows to one app's instances, same filter shape connectionStore's
+  // listByUser doesn't have yet (TODO(ask) below).
+  async listByUser(userId: UserId, app?: AppId): Promise<TriggerInstance[]> {
+    const rows = await orm
+      .select()
+      .from(triggerInstancesTable)
+      .where(app ? and(eq(triggerInstancesTable.user_id, userId), eq(triggerInstancesTable.app, app)) : eq(triggerInstancesTable.user_id, userId));
+    return rows.map(triggerInstanceRowToTriggerInstance);
+  },
 };
 
 export const actionLogStore = {
@@ -153,22 +168,44 @@ export const actionLogStore = {
   },
 };
 
+function triggerLogRowToTriggerLogEntry(row: typeof triggerLogsTable.$inferSelect): TriggerLogEntry {
+  return {
+    log_id: row.log_id,
+    trigger_instance_id: row.trigger_instance_id,
+    connection_id: row.connection_id,
+    user_id: row.user_id,
+    app: row.app,
+    trigger_key: row.trigger_key,
+    status: row.status as TriggerLogEntry["status"],
+    ran_at: row.ran_at,
+    error: row.error ?? undefined,
+    webhook_url: row.webhook_url ?? undefined,
+    payload: row.payload ?? undefined,
+  };
+}
+
 export const triggerLogStore = {
   async append(entry: TriggerLogEntry): Promise<void> {
     await orm.insert(triggerLogsTable).values(entry);
   },
+  async get(logId: string): Promise<TriggerLogEntry | null> {
+    const [row] = await orm.select().from(triggerLogsTable).where(eq(triggerLogsTable.log_id, logId));
+    return row ? triggerLogRowToTriggerLogEntry(row) : null;
+  },
   async listRecent(limit: number): Promise<TriggerLogEntry[]> {
     const rows = await orm.select().from(triggerLogsTable).orderBy(desc(triggerLogsTable.ran_at)).limit(limit);
-    return rows.map((row) => ({
-      log_id: row.log_id,
-      trigger_instance_id: row.trigger_instance_id,
-      connection_id: row.connection_id,
-      user_id: row.user_id,
-      app: row.app,
-      trigger_key: row.trigger_key,
-      status: row.status as TriggerLogEntry["status"],
-      ran_at: row.ran_at,
-      error: row.error ?? undefined,
-    }));
+    return rows.map(triggerLogRowToTriggerLogEntry);
+  },
+  // Client-facing "what has this trigger instance actually done" — status/webhook_url/history, the same
+  // per-run detail GET /admin/trigger_logs gives an admin, scoped to one instance instead of every user's.
+  // Ownership (does this instance belong to the caller's user_id) is checked by the route, not here.
+  async listByInstance(triggerInstanceId: string, limit: number): Promise<TriggerLogEntry[]> {
+    const rows = await orm
+      .select()
+      .from(triggerLogsTable)
+      .where(eq(triggerLogsTable.trigger_instance_id, triggerInstanceId))
+      .orderBy(desc(triggerLogsTable.ran_at))
+      .limit(limit);
+    return rows.map(triggerLogRowToTriggerLogEntry);
   },
 };

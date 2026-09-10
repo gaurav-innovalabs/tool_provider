@@ -15,6 +15,20 @@
       "when": 1788966597722,
       "tag": "0001_orange_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789015403122,
+      "tag": "0002_trigger_instance_extra_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789015748424,
+      "tag": "0003_trigger_logs_webhook_url_payload",
+      "breakpoints": true
     }
   ]
 }

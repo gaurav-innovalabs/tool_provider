@@ -1,0 +1,1 @@
+ALTER TABLE "trigger_instances" ADD COLUMN "extra_metadata" jsonb DEFAULT '{}'::jsonb NOT NULL;

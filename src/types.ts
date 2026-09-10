@@ -128,6 +128,12 @@ export interface TriggerDefinition<Cursor = unknown, Event = unknown> {
   poll?: (connection: Connection, cursor: Cursor | null) => Promise<{ events: Event[]; nextCursor: Cursor }>;
   // Only relevant when mode === "webhook". Parses a raw inbound payload into normalized events.
   handleWebhook?: (connection: Connection, rawPayload: unknown) => Promise<Event[]>;
+  // Declared shape of each `data` object delivered to a subscriber's webhook_url (src/core/scheduler.ts's
+  // deliverEvent envelope) — same idea as ActionDefinition.output, so GET /triggers (trigger_routes.ts) can
+  // expose a real JSON Schema for the payload instead of a caller having to go read the trigger's source
+  // file. Optional and z.any() is a valid value for a trigger that hasn't had its schema tightened up yet —
+  // this is a "declare it when you know it" field, not a required one.
+  payload?: z.ZodType<Event>;
 }
 
 export interface AppDefinition {
@@ -163,7 +169,7 @@ export interface TriggerInstance {
   // Where the scheduler POSTs events when this trigger fires — "we will call the user webhook_url when
   // we receive any trigger", same fan-in-per-subscription idea as Composio's set_webhook_subscription,
   // just attached directly to the trigger instance rather than as a separate project-wide resource (see
-  // research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section for why that's a
+  // docs/research/triggers-patterns.md's "Trigger setup vs. trigger delivery" section for why that's a
   // deliberate simplification, not an oversight, at our current scale).
   webhook_url: string;
   // Resolved once at subscribe time — the trigger's own defaultPollIntervalMs, or an explicit override
@@ -174,6 +180,15 @@ export interface TriggerInstance {
   // Per-app-shaped (GmailHistoryCursor vs a label-id set vs SlackPollCursor) — opaque here on purpose,
   // src/core/scheduler.ts passes it straight through to the trigger's own poll() untouched.
   cursor: unknown;
+  // Opaque client space, same contract as Connection.extra_metadata — never read/interpreted by us, never
+  // secret, returned as-is (e.g. `{ notes: "for the #support-eu channel" }`). Settable at subscribe time
+  // and editable after via PATCH /triggers/:id (src/api/trigger_routes.ts) — unlike Connection's, which is
+  // write-once at POST /connections time, this one's meant to be a living scratch space for the caller.
+  // TODO(ask): size cap is a guess — trigger_routes.ts enforces 4096 bytes of JSON.stringify(extra_metadata)
+  // server-side (Stripe's metadata limits were the nearest real-world reference point, not an exact match).
+  // Confirm the number, and whether Connection.extra_metadata (currently unbounded) should get the same cap
+  // for consistency.
+  extra_metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -212,4 +227,10 @@ export interface TriggerLogEntry {
   status: TriggerLogStatus;
   ran_at: string;
   error?: string;
+  // Set together on a webhook DELIVERY row (src/core/scheduler.ts's deliverEvent), both absent on a
+  // poll-ATTEMPT row (logPollRun — nothing was sent, nothing to resend). `payload` is the exact envelope
+  // that was POSTed — { id, type, metadata, data, timestamp }. A row with `payload` set is resendable via
+  // POST /triggers/logs/{log_id}/resend, Stripe-CLI-`events resend`-style — see trigger_routes.ts.
+  webhook_url?: string;
+  payload?: unknown;
 }

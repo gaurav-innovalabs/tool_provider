@@ -44,6 +44,10 @@ export const triggerInstances = pgTable("trigger_instances", {
   // src/core/scheduler.ts's isDue().
   poll_interval_ms: integer("poll_interval_ms"),
   cursor: jsonb("cursor"), // per-app shaped (GmailHistoryCursor vs a Slack shape), jsonb is the only sane column type
+  // Opaque client space (e.g. { notes: "..." }) — same idea as connections.extra_metadata, but editable
+  // after creation via PATCH /triggers/:id. See types.ts's TriggerInstance.extra_metadata TODO(ask) on the
+  // size cap enforced at the route boundary (not here — this column has no DB-level constraint).
+  extra_metadata: jsonb("extra_metadata").notNull().default({}),
   created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
 });
@@ -81,4 +85,13 @@ export const triggerLogs = pgTable("trigger_logs", {
   status: text("status").notNull(), // success | error
   ran_at: timestamp("ran_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   error: text("error"),
+  // Both null for a poll-ATTEMPT row (logPollRun — no single event, nothing to resend). Set together for a
+  // webhook DELIVERY row (deliverEvent) — `payload` is the exact envelope POSTed (src/core/scheduler.ts's
+  // `envelope`: {id, type, metadata, data, timestamp}), `webhook_url` is the URL it was sent to at the
+  // time (kept for audit/display even though POST /triggers/logs/{id}/resend re-sends to the trigger
+  // instance's CURRENT webhook_url, not this one — per PHASES.md Phase 3's original resend note, so a
+  // since-updated webhook_url is honored). `payload !== null` is what makes a row resendable — no separate
+  // `kind` column; see trigger_routes.ts's resend handler.
+  webhook_url: text("webhook_url"),
+  payload: jsonb("payload"),
 });

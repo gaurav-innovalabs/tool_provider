@@ -10,11 +10,16 @@ import { config } from "../config";
 import {
   searchTools,
   manageConnection,
+  listConnections,
   executeTool,
   waitForConnection,
   getToolSchema,
   listTriggers,
   subscribeTrigger,
+  listTriggerInstances,
+  listTriggerLogs,
+  getTriggerLog,
+  resendTriggerWebhook,
   type AppScope,
 } from "./metaTools";
 import {
@@ -22,6 +27,8 @@ import {
   searchToolsOutput,
   manageConnectionInput,
   manageConnectionOutput,
+  listConnectionsInput,
+  listConnectionsOutput,
   executeToolInput,
   executeToolOutput,
   waitForConnectionInput,
@@ -31,6 +38,14 @@ import {
   listTriggersOutput,
   subscribeTriggerInput,
   subscribeTriggerOutput,
+  listTriggerInstancesInput,
+  listTriggerInstancesOutput,
+  listTriggerLogsInput,
+  listTriggerLogsOutput,
+  getTriggerLogInput,
+  getTriggerLogOutput,
+  resendTriggerWebhookInput,
+  resendTriggerWebhookOutput,
 } from "./types";
 
 function requireEnv(name: string): string {
@@ -89,6 +104,16 @@ export function buildMcpServer(userId: string, scope: AppScope = null): McpServe
   );
 
   server.registerTool(
+    "list_connections",
+    {
+      description: "List the current user's connections (optionally filtered by app) — what's already connected, and its status.",
+      inputSchema: listConnectionsInput.shape,
+      outputSchema: listConnectionsOutput,
+    },
+    (input) => toolResult(listConnections(userId, input, scope)),
+  );
+
+  server.registerTool(
     "wait_for_connection",
     {
       description: "Block until a pending connection (from manage_connection or execute_tool's not_connected result) becomes active, or times out. Use this instead of blindly retrying execute_tool.",
@@ -125,6 +150,46 @@ export function buildMcpServer(userId: string, scope: AppScope = null): McpServe
       outputSchema: subscribeTriggerOutput,
     },
     (input) => toolResult(subscribeTrigger(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "list_trigger_instances",
+    {
+      description: "List the current user's subscribed trigger instances (optionally filtered by app) — distinct from list_triggers, which lists available trigger TYPES, not what's actually subscribed.",
+      inputSchema: listTriggerInstancesInput.shape,
+      outputSchema: listTriggerInstancesOutput,
+    },
+    (input) => toolResult(listTriggerInstances(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "list_trigger_logs",
+    {
+      description: "List what a subscribed trigger instance has actually fired — status, which webhook_url each attempt went to, the error if any, and whether it can be resent. Stripe-CLI 'events list' style.",
+      inputSchema: listTriggerLogsInput.shape,
+      outputSchema: listTriggerLogsOutput,
+    },
+    (input) => toolResult(listTriggerLogs(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "get_trigger_log",
+    {
+      description: "Get one trigger event's full body, including its payload — list_trigger_logs deliberately omits payload; this is the one call that returns it. log_id IS the event id for a delivery row. Stripe 'GET /v1/events/{id}' style.",
+      inputSchema: getTriggerLogInput.shape,
+      outputSchema: getTriggerLogOutput,
+    },
+    (input) => toolResult(getTriggerLog(userId, input, scope)),
+  );
+
+  server.registerTool(
+    "resend_trigger_webhook",
+    {
+      description: "Replay one already-fired trigger event (from list_trigger_logs, where resendable is true) — re-POSTs the exact same captured payload to the trigger instance's current webhook_url. Stripe-CLI 'events resend' style.",
+      inputSchema: resendTriggerWebhookInput.shape,
+      outputSchema: resendTriggerWebhookOutput,
+    },
+    (input) => toolResult(resendTriggerWebhook(userId, input, scope)),
   );
 
   return server;
