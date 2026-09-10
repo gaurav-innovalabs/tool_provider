@@ -1,0 +1,289 @@
+### test_components/slack/slack.http — full manual test flow for the Slack component: connect, every
+### action (15), the trigger (subscribe/unsubscribe + the webhook endpoint itself). Same JetBrains HTTP
+### Client / VS Code REST Client format as the root ../../tool_provider.http (which now only keeps a
+### couple of Slack examples for a quick smoke test — this file is the complete one). Unit tests covering
+### the same actions against mocked responses live in ./actions/*.test.ts (`bun test test_components/slack`).
+###
+### Slack's new_message trigger needs no worker — it's delivered by the API server itself via
+### POST {{base_url}}/webhooks/slack/events, registered as the Request URL in Slack's own app config
+### (Events API). No polling, unlike Gmail.
+
+@base_url = http://localhost:3005
+
+### ----------------------------------------------------
+### 🔧 Create a user (skip if you already have one — see root tool_provider.http)
+### ----------------------------------------------------
+POST {{base_url}}/users
+Content-Type: application/json
+
+{
+  "metadata": { "note": "created from test_components/slack/slack.http" }
+}
+
+### Copy the returned user_id into this variable
+@user_id = usr_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Connect Slack (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth.
+### Requests both bot scopes (`scope`) and user scopes (`user_scope: chat:write,search:read` — needed for
+### as_user:true and find_messages, see app.ts's extraAuthorizeParams comment).
+### ----------------------------------------------------
+POST {{base_url}}/connections
+Content-Type: application/json
+
+{
+  "user_id": "{{user_id}}",
+  "app": "slack"
+}
+
+### Copy the returned connection_id here once the OAuth flow above completes
+@slack_connection_id = conn_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Check the connection's status — should be "active" once OAuth completes
+### ----------------------------------------------------
+GET {{base_url}}/connections/{{slack_connection_id}}
+
+# ============================================================================
+# ACTIONS (15)
+# ============================================================================
+
+### ----------------------------------------------------
+### 🔧 post_message — post to a channel (as_user:false = bot token, default)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "#general", "text": "Hello from slack.http" }
+}
+
+### Copy a channel + ts here to test update/delete/reactions below (post_message's response)
+@slack_channel = C_REPLACE_ME
+@slack_message_ts = 0000000000.000000
+
+### ----------------------------------------------------
+### 🔧 post_message — as_user:true (posts using the authorizing human's own token, not the bot)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "text": "Posted as the connected user", "as_user": true }
+}
+
+### ----------------------------------------------------
+### 🔧 update_message — edit a previously posted message (as_user must match how it was originally sent)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_UPDATE_MESSAGE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "text": "Edited via slack.http" }
+}
+
+### ----------------------------------------------------
+### 🔧 delete_message — delete a message (as_user must match how it was originally sent)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_DELETE_MESSAGE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 add_reaction — add an emoji reaction (name without colons)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_ADD_REACTION
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
+}
+
+### ----------------------------------------------------
+### 🔧 remove_reaction — remove an emoji reaction
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_REMOVE_REACTION
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "ts": "{{slack_message_ts}}", "name": "thumbsup" }
+}
+
+### ----------------------------------------------------
+### 🔧 send_direct_message — DM a user (conversations.open + chat.postMessage)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_SEND_DIRECT_MESSAGE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "user": "U_REPLACE_ME", "text": "Hello via DM from slack.http" }
+}
+
+### ----------------------------------------------------
+### 🔧 list_channels — list channels visible to the app
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_LIST_CHANNELS
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "limit": 20 }
+}
+
+### ----------------------------------------------------
+### 🔧 create_channel — create a channel, public or private
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_CREATE_CHANNEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "name": "test-channel-from-http", "is_private": false }
+}
+
+### Copy the returned channel id here to test archive/invite/topic below
+@slack_new_channel = C_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 set_channel_topic — set a channel's topic
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_SET_CHANNEL_TOPIC
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_new_channel}}", "topic": "Set via slack.http" }
+}
+
+### ----------------------------------------------------
+### 🔧 invite_user_to_channel — invite one or more users (Slack user ids)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_INVITE_USER_TO_CHANNEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_new_channel}}", "users": ["U_REPLACE_ME"] }
+}
+
+### ----------------------------------------------------
+### 🔧 archive_channel — archive a channel
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_ARCHIVE_CHANNEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_new_channel}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 list_users — list workspace members
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_LIST_USERS
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "limit": 20 }
+}
+
+### ----------------------------------------------------
+### 🔧 find_user_by_email — look up a user by email
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_FIND_USER_BY_EMAIL
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "email": "someone@example.com" }
+}
+
+### ----------------------------------------------------
+### 🔧 upload_file — upload a small text file (base64-encoded bytes)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_UPLOAD_FILE
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "channel": "{{slack_channel}}", "filename": "test.txt", "content_base64": "SGVsbG8gZnJvbSBzbGFjay5odHRw", "title": "Test upload" }
+}
+
+### ----------------------------------------------------
+### 🔧 find_messages — search (requires the user token / search:read — see app.ts's extraAuthorizeParams)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/SLACK_FIND_MESSAGES
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "input": { "query": "hello from:@me", "sort": "timestamp", "count": 20 }
+}
+
+# ============================================================================
+# TRIGGER (1) — webhook mode, no polling. GET {{base_url}}/triggers lists it live from the registry.
+# ============================================================================
+
+### ----------------------------------------------------
+### 🔧 List available Slack triggers
+### ----------------------------------------------------
+GET {{base_url}}/triggers
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_message (fires for any message in any channel the app can see; no per-channel filter yet)
+### webhook_url below is where WE deliver parsed events to; separately, Slack's own Events API must be
+### configured (in Slack's app config) to POST to {{base_url}}/webhooks/slack/events for events to arrive
+### here in the first place.
+### ----------------------------------------------------
+POST {{base_url}}/triggers/slack/new_message/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{slack_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+### Copy the returned trigger_instance_id to unsubscribe below
+@slack_new_message_ti = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Slack's own Events API delivery endpoint — this is what Slack calls, not something a client calls
+### directly. Included here for reference/local testing (e.g. replaying a captured payload with curl).
+### First-time setup: Slack sends a `url_verification` challenge here and expects it echoed back.
+### ----------------------------------------------------
+POST {{base_url}}/webhooks/slack/events
+Content-Type: application/json
+
+{
+  "type": "url_verification",
+  "challenge": "test-challenge-token"
+}
+
+### ----------------------------------------------------
+### 🔧 Unsubscribe — delete the trigger instance created above
+### ----------------------------------------------------
+DELETE {{base_url}}/triggers/{{slack_new_message_ti}}
+
+# ============================================================================
+# ADMIN — read-only inspection, filter by app in the response yourself (no per-app query param)
+# ============================================================================
+
+### 🔧 Admin — users
+GET {{base_url}}/admin/users
+
+### 🔧 Admin — trigger instances
+GET {{base_url}}/admin/triggers
+
+### 🔧 Admin — action/trigger call log
+GET {{base_url}}/admin/logs?limit=20

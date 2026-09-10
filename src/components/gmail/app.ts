@@ -13,6 +13,9 @@ import { deleteLabel } from "./actions/deleteLabel";
 import { createDraft } from "./actions/createDraft";
 import { newEmail } from "./triggers/newEmail";
 import { newLabeledEmail } from "./triggers/newLabeledEmail";
+import { newSentEmail } from "./triggers/newSentEmail";
+import { newStarredEmail } from "./triggers/newStarredEmail";
+import { newDraft } from "./triggers/newDraft";
 
 export const gmailApp: AppDefinition = {
   id: "gmail",
@@ -42,5 +45,10 @@ export const gmailApp: AppDefinition = {
   // new_label (label creation) was removed — no real event exists for it anywhere, confirmed by
   // exhaustively checking Pipedream's actual 5 Gmail sources during R&D. new_labeled_email (a label being
   // applied to a message) replaces it — that one's real, verified against Pipedream's actual source.
-  triggers: [newEmail, newLabeledEmail],
+  // new_sent_email/new_draft watch messageAdded + filter by the SENT/DRAFT system label (Gmail's history
+  // API has no dedicated historyType for either); new_starred_email watches labelAdded + filters STARRED,
+  // same technique as new_labeled_email. new_email_matching_search intentionally not added — it needs a
+  // per-instance search query and src/api/trigger_routes.ts has no per-instance config field yet (same gap
+  // new_labeled_email's per-label filter hit — see src/components/TODO.md).
+  triggers: [newEmail, newLabeledEmail, newSentEmail, newStarredEmail, newDraft],
 };

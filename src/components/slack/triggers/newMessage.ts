@@ -9,6 +9,7 @@
 // src/api/webhook_routes.ts's /webhooks/slack/events handler and src/lib/slackSignature.ts, since those
 // are concerns about the inbound HTTP request itself, not about one specific trigger's payload shape.
 
+import { z } from "zod";
 import type { TriggerDefinition } from "../../../types";
 
 export interface NewMessageEvent {
@@ -17,6 +18,13 @@ export interface NewMessageEvent {
   text: string;
   ts: string;
 }
+
+const newMessagePayload: z.ZodType<NewMessageEvent> = z.object({
+  channel: z.string(),
+  user: z.string(),
+  text: z.string(),
+  ts: z.string(),
+});
 
 // Raw shape of a Slack `message` event, per https://api.slack.com/events/message — only the fields we
 // actually use, not the full (much larger) real shape.
@@ -37,6 +45,7 @@ export const newMessage: TriggerDefinition<unknown, NewMessageEvent> = {
   key: "new_message",
   description: "Fires when a new message is posted in a channel the connected app can see.",
   mode: "webhook",
+  payload: newMessagePayload,
   // TODO(ask): still open — does a trigger *instance* need a specific channel_id at subscribe-time, or
   // does this fire for all channels the app is in? Currently: all channels (no per-instance filter yet).
   async handleWebhook(_connection, rawPayload) {

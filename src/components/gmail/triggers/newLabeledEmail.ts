@@ -9,6 +9,7 @@
 // label filter yet. Add one later if it's actually needed (same shape as Pipedream's `labels` prop would
 // require threading a per-TriggerInstance config value through subscribe, which nothing else here does yet).
 
+import { z } from "zod";
 import type { TriggerDefinition } from "../../../types";
 
 export interface GmailHistoryCursor {
@@ -19,6 +20,11 @@ export interface NewLabeledEmailEvent {
   message_id: string;
   label_ids_added: string[];
 }
+
+const newLabeledEmailPayload: z.ZodType<NewLabeledEmailEvent> = z.object({
+  message_id: z.string(),
+  label_ids_added: z.array(z.string()),
+});
 
 interface GmailProfileResponse {
   historyId: string;
@@ -44,6 +50,7 @@ export const newLabeledEmail: TriggerDefinition<GmailHistoryCursor, NewLabeledEm
   description: "Fires when a label is applied to an email in the connected Gmail account.",
   mode: "poll",
   defaultPollIntervalMs: 8 * 60 * 1000, // 8 min, per spec
+  payload: newLabeledEmailPayload,
   async poll(connection, cursor) {
     if (!connection.secrets?.access_token) {
       throw new Error(`Connection ${connection.connection_id} has no access_token in secrets (not active yet?)`);

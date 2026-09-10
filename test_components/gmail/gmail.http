@@ -1,0 +1,264 @@
+### test_components/gmail/gmail.http — full manual test flow for the Gmail component: connect, every
+### action, every trigger (subscribe/unsubscribe). Same JetBrains HTTP Client / VS Code REST Client format
+### as the root ../../tool_provider.http (which now only keeps a couple of Gmail examples for a quick
+### smoke test — this file is the complete one). Unit tests covering the same actions/triggers against
+### mocked responses live in ./actions/*.test.ts and ./triggers/*.test.ts (`bun test test_components/gmail`).
+###
+### For triggers to actually fire against a live connection, `bun run worker` (worker.ts) must be running
+### alongside `bun run dev` — Gmail polling happens in a separate process (see ../../PHASES.md Phase 3).
+
+@base_url = http://localhost:3005
+
+# ============================================================================
+# 🔍 How to check an action's input/output schema (or a trigger's event payload schema) via the API
+# ============================================================================
+# Every schema below is GENERATED live from the actual zod definitions in src/components/gmail/actions/*.ts
+# (via z.toJSONSchema() — see src/openapi.ts's header comment) — it can't drift out of sync with the code,
+# so this is the authoritative way to check a shape, not reading source or trusting a comment in this file.
+#
+# 1) Swagger UI — the human-friendly way, browse every action's request/response shape interactively:
+#      GET {{base_url}}/docs
+#
+# 2) Per-tool schema route — GET /actions/{tool_slug} returns exactly this action's real input/output
+#    schema, e.g. list_recent_emails:
+GET {{base_url}}/actions/GMAIL_LIST_RECENT_EMAILS
+
+### (or fetch the whole spec and jq into the shared execute/list-tool paths, e.g.
+### `jq '.paths."/actions/execute/{tool_slug}".post.responses."200"' openapi.json` — but GET
+### /actions/{tool_slug} above is the direct way to check ONE action's shape, no digging required)
+GET {{base_url}}/openapi.json
+#
+# 3) Triggers are simpler — GET /triggers already returns each trigger's `payload` JSON Schema directly,
+#    no digging into a bigger spec required (`payload` is `null` for a trigger that hasn't declared one —
+#    see src/types.ts's TriggerDefinition.payload comment). See the TRIGGERS section further down.
+
+### ----------------------------------------------------
+### 🔧 Create a user (skip if you already have one — see root tool_provider.http)
+### ----------------------------------------------------
+POST {{base_url}}/users
+Content-Type: application/json
+
+{
+  "metadata": { "note": "created from test_components/gmail/gmail.http" }
+}
+
+### Copy the returned user_id into this variable
+@user_id = usr_acd99107-e6f4-4d2b-b1c2-f44df5a05183
+
+### ----------------------------------------------------
+### 🔧 Connect Gmail (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth
+### ----------------------------------------------------
+POST {{base_url}}/connections
+Content-Type: application/json
+
+{
+  "user_id": "{{user_id}}",
+  "app": "gmail"
+}
+
+### Copy the returned connection_id here once the OAuth flow above completes
+@gmail_connection_id = conn_22009865-aa52-4caf-ad6e-6fb16858d2ca
+
+### ----------------------------------------------------
+### 🔧 Check the connection's status — should be "active" once OAuth completes
+### ----------------------------------------------------
+GET {{base_url}}/connections/{{gmail_connection_id}}
+
+# ============================================================================
+# ACTIONS (8)
+# ============================================================================
+
+### ----------------------------------------------------
+### 🔧 send_email — send a plain-text email
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_SEND_EMAIL
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": {
+    "to": "someone@example.com",
+    "subject": "Hello from gmail.http",
+    "body": "Testing the send_email action."
+  }
+}
+
+### ----------------------------------------------------
+### 🔧 list_recent_emails — list recent mail, optionally filtered by a Gmail search query
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_LIST_RECENT_EMAILS
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "max_results": 5, "query": "is:unread" }
+}
+
+### ----------------------------------------------------
+### 🔧 list_labels — list all labels (system + user)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_LIST_LABELS
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": {}
+}
+
+### ----------------------------------------------------
+### 🔧 create_label — create a user label
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_CREATE_LABEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "name": "TestLabel" }
+}
+
+### Copy a label id here to test get/update/delete below (create_label's response, or from list_labels)
+@gmail_label_id = Label_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 get_label — get one label's details, including message counts
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_GET_LABEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 update_label — rename a user label (system labels will be rejected by Gmail)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_UPDATE_LABEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}", "name": "RenamedLabel" }
+}
+
+### ----------------------------------------------------
+### 🔧 delete_label — delete a user label (system labels cannot be deleted)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_DELETE_LABEL
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "label_id": "{{gmail_label_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 create_draft — create ("draft") an unsent email. This IS the draft-email action — Gmail/Pipedream
+### only has one draft-related action (create), no separate "draft_email" key; see createDraft.ts's header
+### comment for why send-draft/list-drafts/delete-draft weren't added.
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_CREATE_DRAFT
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "to": "someone@example.com", "subject": "Draft from gmail.http", "body": "Not sent yet." }
+}
+
+# ============================================================================
+# TRIGGERS (5) — all poll-mode, 8-min default interval, GmailHistoryCursor-based.
+# GET {{base_url}}/triggers lists these live from the registry, with each one's real JSON Schema payload.
+# ============================================================================
+
+### ----------------------------------------------------
+### 🔧 List available Gmail triggers (filter this app's rows out of the full /triggers response)
+### ----------------------------------------------------
+GET {{base_url}}/triggers
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_email (fires when a new email arrives)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+### Copy the returned trigger_instance_id to unsubscribe below
+@gmail_new_email_ti = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_labeled_email (fires when a label is applied to a message; ALL labels, no per-instance filter yet)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_labeled_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+@gmail_new_labeled_email_ti = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_sent_email (fires when an email is sent; watches messageAdded + filters the SENT label)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_sent_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+@gmail_new_sent_email_ti = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_starred_email (fires when an email is starred; watches labelAdded + filters STARRED)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_starred_email/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+@gmail_new_starred_email_ti = ti_REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_draft (fires when a draft is created; watches messageAdded + filters the DRAFT label)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_draft/subscribe
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/your-unique-url-here"
+}
+
+@gmail_new_draft_ti = ti_REPLACE_ME
+
+### Note: new_email_matching_search is NOT implemented — it needs a per-instance search query, and the
+### subscribe body above has no generic per-instance config field yet (see src/components/TODO.md and
+### src/components/gmail/app.ts's trigger-registration comment).
+
+### ----------------------------------------------------
+### 🔧 Unsubscribe — delete any of the trigger instances created above
+### ----------------------------------------------------
+DELETE {{base_url}}/triggers/{{gmail_new_email_ti}}
+
+# ============================================================================
+# ADMIN — read-only inspection, filter by app in the response yourself (no per-app query param)
+# ============================================================================
+
+### 🔧 Admin — users
+GET {{base_url}}/admin/users
+
+### 🔧 Admin — trigger instances
+GET {{base_url}}/admin/triggers
+
+### 🔧 Admin — action/trigger call log
+GET {{base_url}}/admin/logs?limit=20
