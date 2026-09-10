@@ -45,8 +45,7 @@ const envSchema = z.object({
 
   GMAIL_CLIENT_ID: z.string().optional().default(""),
   GMAIL_CLIENT_SECRET: z.string().optional().default(""),
-  // Default poll cadence for every Gmail trigger (new_email, new_draft, new_sent_email, new_labeled_email,
-  // new_starred_email) — was a hardcoded `8 * 60 * 1000` literal duplicated in all 5 trigger files. This is
+  // Default poll cadence for every Gmail trigger (new_email, new_draft, new_sent_email, new_starred_email) — was a hardcoded `8 * 60 * 1000` literal duplicated in all 5 trigger files. This is
   // only the DEFAULT a new subscription gets when its own POST /triggers/gmail/:trigger/subscribe body
   // doesn't specify `poll_interval_ms` — that per-subscription override (60s minimum, same floor as this
   // env var) already existed and still takes precedence; this just controls what "didn't ask" resolves to,

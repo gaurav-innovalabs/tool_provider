@@ -95,7 +95,17 @@ export const webhookRoutes = {
         return new Response(`No webhook receiver "${req.params.hook}" registered for app "${app.id}"`, { status: 404 });
       }
 
-      return handler(req);
+      // Every EXPECTED failure inside a handler already logs its own specific reason (missing/invalid
+      // signature, bad JSON, etc. — see e.g. slackSignature.ts). This catches the unexpected case: a real
+      // bug, a downstream call throwing, anything the handler's own code didn't anticipate — so THAT still
+      // gets a labeled log line here instead of silently becoming a generic Bun error with no
+      // "[webhooks]"-tagged trace back to which provider/hook it came from.
+      try {
+        return await handler(req);
+      } catch (err) {
+        console.error(`[webhooks] ${app.id}/${req.params.hook} handler threw an unexpected error:`, err);
+        return new Response("Internal error handling webhook", { status: 500 });
+      }
     },
   },
 };

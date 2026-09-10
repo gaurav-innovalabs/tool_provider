@@ -1,4 +1,4 @@
-// Real trigger, same shape as new_labeled_email — starring a message is just Gmail applying the STARRED
+// Real trigger — starring a message is just Gmail applying the STARRED
 // system label, so this watches the same historyTypes: labelAdded feed and filters for STARRED. No
 // separate API concept for "starred" beyond that label.
 

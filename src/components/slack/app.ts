@@ -16,7 +16,6 @@ import { addReaction } from "./actions/addReaction";
 import { removeReaction } from "./actions/removeReaction";
 import { createChannel } from "./actions/createChannel";
 import { archiveChannel } from "./actions/archiveChannel";
-import { joinChannel } from "./actions/joinChannel";
 import { inviteUserToChannel } from "./actions/inviteUserToChannel";
 import { setChannelTopic } from "./actions/setChannelTopic";
 import { listUsers } from "./actions/listUsers";
@@ -58,11 +57,6 @@ export const slackApp: AppDefinition = {
     // im:write          - send_direct_message (conversations.open)
     // channels:read     - list_channels
     // channels:manage   - create_channel, archive_channel, invite_user_to_channel, set_channel_topic
-    // channels:join     - join_channel (conversations.join — a real, distinct scope from channels:manage
-    //                     above, confirmed against a live 403 missing_scope when it was missing here).
-    //                     Required for the bot to actually RECEIVE events from a public channel;
-    //                     chat:write.public above only covers posting there, a separate permission from
-    //                     receiving events — see joinChannel.ts's header comment for the full story.
     // reactions:write   - add_reaction, remove_reaction
     // users:read        - list_users, find_user_by_email
     // users:read.email  - find_user_by_email (users.lookupByEmail needs the email-specific scope too)
@@ -77,13 +71,34 @@ export const slackApp: AppDefinition = {
     // files:read        - EVENT scope for the file_shared trigger (distinct from files:write above, which
     //                     is for the upload_file action — Slack splits file read/write the same way it
     //                     splits reactions:read/reactions:write).
+    // groups:write       - create_channel(is_private: true) — createChannel.ts's own comment already
+    //                     flagged this 403 missing_scope gap; closed here.
+    //
+    // ---------------------------------------------------------------------------------------------------
+    // Bot scopes vs. user scopes — what's still bot-scoped and why, per
+    // TRIGGER_USER_SCOPED_REFACTOR.md (2026-09-10): Pipedream's real, verified behavior is that TRIGGERS
+    // (event receipt) run on USER-scoped Events API delivery ("Subscribe to events on behalf of users"),
+    // not bot-scoped — Slack delivers everything the connecting human can already see, with NO requirement
+    // that the bot itself be a member of the channel. Verified live: Pipedream's own trigger fired from a
+    // channel with zero Pipedream bot in conversations.members. Confirmed via Slack's own docs
+    // (docs.slack.dev/apis/events-api/, "you will only receive events that users who've authorized your
+    // app can 'see' on their workspace") that this is a real, current, fully-supported delivery mode — not
+    // a legacy artifact or a hack.
+    //
+    // So: reactions:read, channels:history, groups:read, groups:history, im:read, im:history, mpim:read,
+    // mpim:history, files:read above are BOT scopes that exist ONLY because they used to double as event
+    // scopes under bot-scoped delivery — they're KEPT here because get_channel_history/get_thread_replies
+    // (channels:history) and other read ACTIONS still use the bot token and still need them for that. What
+    // moved is event DELIVERY itself: triggers now subscribe via user_scope below, not via these.
+    // channels:join is REMOVED (2026-09-10): its only purpose was letting the bot self-join a channel so
+    // it could receive events under the old bot-scoped model — with triggers now user-scoped, that need is
+    // gone, and nothing else used conversations.join, so the join_channel action was deleted along with it.
     scopes: [
       "chat:write",
       "chat:write.public",
       "im:write",
       "channels:read",
       "channels:manage",
-      "channels:join",
       "reactions:write",
       "reactions:read",
       "users:read",
@@ -91,15 +106,32 @@ export const slackApp: AppDefinition = {
       "files:write",
       "files:read",
       "channels:history",
+      "groups:read",
+      "groups:history",
+      "groups:write",
+      "im:read",
+      "im:history",
+      "mpim:read",
+      "mpim:history",
     ],
     client_id: config.apps.slack.SLACK_CLIENT_ID,
     client_secret: config.apps.slack.SLACK_CLIENT_SECRET,
     // Slack-specific v2 OAuth param requesting a SECOND token — the user's own (authed_user.access_token,
-    // captured by lib/oauth.ts's exchangeCodeForToken into secrets.user_access_token). Two things need it
-    // and only it, a bot token cannot do either: `as_user: true` on the message actions (posting/editing/
-    // deleting AS the authorizing human, not as the bot) needs chat:write here; find_messages
-    // (search.messages) needs search:read — that Slack Web API method flatly rejects bot tokens.
-    extraAuthorizeParams: { user_scope: "chat:write,search:read" },
+    // captured by lib/oauth.ts's exchangeCodeForToken into secrets.user_access_token). USER scopes here
+    // cover two distinct needs:
+    //   chat:write, search:read       - as_user:true message actions + find_messages (search.messages
+    //                                   flatly rejects bot tokens) — unrelated to triggers, pre-existing.
+    //   channels:history, groups:history, im:history, mpim:history, reactions:read (+ paired :read scopes
+    //   channels:read, groups:read, im:read, mpim:read) - EVENT delivery for every Slack trigger
+    //   (new_message, reaction_added, etc.), added 2026-09-10 per TRIGGER_USER_SCOPED_REFACTOR.md. This is
+    //   what actually makes triggers user-scoped instead of bot-scoped: Slack's Event Subscriptions page
+    //   has a SEPARATE "Subscribe to events on behalf of users" section (distinct from "Subscribe to bot
+    //   events") — the 9 event types need to be added THERE, not (only) under bot events, for this
+    //   user_scope grant to actually deliver anything. See .env.example for the click-path.
+    extraAuthorizeParams: {
+      user_scope:
+        "chat:write,search:read,channels:history,groups:history,im:history,mpim:history,reactions:read,channels:read,groups:read,im:read,mpim:read",
+    },
   },
   actions: [
     postMessage,
@@ -111,7 +143,6 @@ export const slackApp: AppDefinition = {
     removeReaction,
     createChannel,
     archiveChannel,
-    joinChannel,
     inviteUserToChannel,
     setChannelTopic,
     listUsers,

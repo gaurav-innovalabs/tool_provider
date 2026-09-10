@@ -1,7 +1,7 @@
 // API reference: https://docs.slack.dev/reference/methods/conversations.create — bot scope: one of
-// channels:manage / channels:write / groups:write depending on is_private, per that doc; this app only
-// declares channels:manage (see app.ts), so is_private: true will fail with missing_scope until this app's
-// scope list grows groups:write too.
+// channels:manage / channels:write for a public channel, groups:write for is_private: true. Both are
+// declared in app.ts, so either path works — an existing connection needs a fresh OAuth grant (reconnect)
+// to actually pick up groups:write if it was authorized before 2026-09-10.
 // Response shape: { ok, channel: { id, name, ... } } on success.
 
 import { z } from "zod";

@@ -12,11 +12,33 @@ import { connectionStore, triggerInstanceStore } from "../../../core/store";
 import { getApp } from "../../../core/registry";
 import { verifySlackSignature } from "../../../lib/slackSignature";
 import { deliverEvent } from "../../../core/scheduler";
+import { redis } from "../../../lib/redis";
+
+// Slack retries an Events API POST if our endpoint doesn't ack within 3s or returns non-2xx — so under
+// load (a slow deliverSlackEvent fan-out, a burst of events) the exact same event_id can legitimately
+// arrive here twice. Without a dedup check that means a duplicate delivery to every matching
+// TriggerInstance's webhook_url. Same pattern the sibling project /home/gr/projects/backend already uses
+// (slack_gateway_routes.py, Redis-keyed on Slack's own event_id) — reused here rather than invented fresh.
+// NX (set-if-not-absent) makes the check-and-mark atomic: two near-simultaneous requests for the same
+// event_id can't both pass. 10 min TTL is comfortably longer than Slack's own retry window (a few retries
+// over at most ~1 min), just enough to survive concurrent retries without growing this key forever.
+const EVENT_DEDUP_PREFIX = "slack:event:dedup:";
+const EVENT_DEDUP_TTL_SECONDS = 10 * 60;
+
+// Returns true the FIRST time this event_id is seen (caller should process it), false on a repeat
+// (caller should just ack and skip). event_id is absent on some payloads (e.g. url_verification never
+// reaches this — see below) — those aren't deduped, since Slack itself only retries actual event_callback
+// deliveries, the ones that always carry an event_id.
+async function isFirstDelivery(eventId: string): Promise<boolean> {
+  const result = await redis.set(`${EVENT_DEDUP_PREFIX}${eventId}`, "1", "NX", "EX", String(EVENT_DEDUP_TTL_SECONDS));
+  return result === "OK";
+}
 
 interface SlackEventsApiBody {
   type: string; // "url_verification" | "event_callback" | ...
   challenge?: string; // only present for url_verification
   team_id?: string;
+  event_id?: string; // present on every event_callback — Slack's own id, reused as our dedup key
   event?: {
     type: string; // "message", "reaction_added", "member_joined_channel", "channel_created", ...
     subtype?: string;
@@ -145,6 +167,18 @@ export async function handleSlackEventsWebhook(req: Request): Promise<Response> 
   if (body.type !== "event_callback" || !body.event || !body.team_id) {
     console.log(`[webhooks] slack event: acked, not handled (type=${body.type}, has event=${!!body.event}, has team_id=${!!body.team_id})`);
     return new Response("ok"); // ack anything we don't handle — Slack retries on non-2xx
+  }
+
+  // Dedup by Slack's own event_id — a retried delivery (we were slow, or returned non-2xx) must not fan
+  // out twice to subscribers' webhook_urls. Checked as early as possible, before any other processing.
+  // No event_id at all (shouldn't happen for a real event_callback, but not fatal) — process it anyway
+  // rather than silently dropping a real event over a missing dedup key.
+  if (body.event_id) {
+    const firstTime = await isFirstDelivery(body.event_id);
+    if (!firstTime) {
+      console.log(`[webhooks] slack event: duplicate delivery, already processed event_id=${body.event_id} — acked, not re-dispatched`);
+      return new Response("ok");
+    }
   }
 
   // Filter out bot/our-own messages — without this, our own post_message action (or any bot) would

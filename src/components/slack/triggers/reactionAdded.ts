@@ -31,26 +31,29 @@ export interface SlackReactionEventPayload {
 
 export interface ReactionAddedConfig {
   channel_id?: string; // real channel ID, NOT a "#name" — see newMessage.ts's NewMessageConfig comment
-  // No thread_ts here on purpose: a reaction_added event only carries the reacted-to message's OWN ts
-  // (item.ts) — if that message is itself a thread reply, Slack does not include its parent thread_ts on
-  // this event, so scoping reactions to "replies within thread X" isn't derivable without an extra
-  // conversations.replies lookup. TODO: revisit if that lookup is ever worth adding here.
+  // Optional, unlike thread_ts on newMessage.ts: scope to reactions on ONE specific message (its own ts,
+  // Slack's item.ts) — e.g. watch a message you just posted for a 👍 reaction. Omit for "any reaction on
+  // any message" (optionally still narrowed by channel_id above). Safe to filter on, unlike newMessage's
+  // thread_ts gap: item.ts is always present on a reaction_added event, no missing-field edge case.
+  message_ts?: string;
 }
 
 const reactionAddedConfig: z.ZodType<ReactionAddedConfig> = z.object({
   channel_id: z.string().optional(),
+  message_ts: z.string().optional(),
 });
 
 export const reactionAdded: TriggerDefinition<unknown, ReactionAddedEvent, ReactionAddedConfig> = {
   key: "reaction_added",
   description:
-    "Fires when someone adds an emoji reaction to a message in a channel the connected app can see. Pass config.channel_id to scope to one channel.",
+    "Fires when someone adds an emoji reaction to a message in a channel the connected app can see. Pass config.channel_id to scope to one channel, and/or config.message_ts to scope to reactions on one specific message — omit both to fire for every reaction everywhere.",
   mode: "webhook",
   payload: reactionAddedPayload,
   config: reactionAddedConfig,
   matchesConfig(rawPayload, config) {
     const event = rawPayload as SlackReactionEventPayload;
     if (config.channel_id && event.item.channel !== config.channel_id) return false;
+    if (config.message_ts && event.item.ts !== config.message_ts) return false;
     return true;
   },
   async handleWebhook(_connection, rawPayload) {

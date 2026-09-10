@@ -14,7 +14,6 @@ import { updateLabel } from "./actions/updateLabel";
 import { deleteLabel } from "./actions/deleteLabel";
 import { createDraft } from "./actions/createDraft";
 import { newEmail } from "./triggers/newEmail";
-import { newLabeledEmail } from "./triggers/newLabeledEmail";
 import { newSentEmail } from "./triggers/newSentEmail";
 import { newStarredEmail } from "./triggers/newStarredEmail";
 import { newDraft } from "./triggers/newDraft";
@@ -45,12 +44,13 @@ export const gmailApp: AppDefinition = {
   },
   actions: [sendEmail, listRecentEmails, getEmail, getCurrentUser, listLabels, getLabel, createLabel, updateLabel, deleteLabel, createDraft],
   // new_label (label creation) was removed — no real event exists for it anywhere, confirmed by
-  // exhaustively checking Pipedream's actual 5 Gmail sources during R&D. new_labeled_email (a label being
-  // applied to a message) replaces it — that one's real, verified against Pipedream's actual source.
+  // exhaustively checking Pipedream's actual 5 Gmail sources during R&D.
   // new_sent_email/new_draft watch messageAdded + filter by the SENT/DRAFT system label (Gmail's history
-  // API has no dedicated historyType for either); new_starred_email watches labelAdded + filters STARRED,
-  // same technique as new_labeled_email. new_email_matching_search intentionally not added — it needs a
-  // per-instance search query and src/api/trigger_routes.ts has no per-instance config field yet (same gap
-  // new_labeled_email's per-label filter hit — see src/components/TODO.md).
-  triggers: [newEmail, newLabeledEmail, newSentEmail, newStarredEmail, newDraft],
+  // API has no dedicated historyType for either); new_starred_email watches labelAdded + filters STARRED.
+  // new_labeled_email (fire on ANY label being applied, not just STARRED) was removed — see PHASES.md's
+  // TODO: it's effectively a superset of new_email with no per-instance label filter to narrow it (same
+  // config gap new_email_matching_search hit — no per-instance field in trigger_routes.ts yet), so every
+  // subscriber got every label change on every message, most of which duplicate what new_email/
+  // new_starred_email already report. new_email_matching_search intentionally not added either, same gap.
+  triggers: [newEmail, newSentEmail, newStarredEmail, newDraft],
 };

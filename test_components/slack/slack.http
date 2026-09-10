@@ -27,7 +27,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned user_id into this variable
-@user_id = usr_bf9d74a9-c070-48ec-b3ad-bf18f0b24b67
+@user_id = usr_b9bb4865-f3c9-48cd-b8f0-2c62e2935245
 
 ### ----------------------------------------------------
 ### 🔧 Connect Slack (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth.
@@ -47,7 +47,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned connection_id here once the OAuth flow above completes
-@slack_connection_id = conn_REPLACE_ME
+@slack_connection_id = conn_2d3e8925-7480-48d8-be36-64ebad2ead0f
 
 ### ----------------------------------------------------
 ### 🔧 Check the connection's status — should be "active" once OAuth completes
@@ -239,26 +239,13 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 get_channel_details — check `is_member` here BEFORE subscribing a trigger scoped to (or reading
-### from) a channel — false means the bot can post there (chat:write.public) but Slack won't deliver ANY
-### events from it, with no error anywhere. Fix with join_channel right below if false.
+### 🔧 get_channel_details — check `is_member` here before an action that posts/reads as the bot in a
+### channel it may not have been invited to (chat:write.public covers public-channel posting without
+### membership; private channels still need an explicit /invite). Trigger event receipt is unaffected by
+### this either way — see TRIGGER_USER_SCOPED_REFACTOR.md: triggers deliver via the connecting user's own
+### Slack visibility, not bot channel membership, so there's no join step needed for events anymore.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_GET_CHANNEL_DETAILS
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "connection_id": "{{slack_connection_id}}",
-  "input": { "channel_id": "C0772SYKNN4" }
-}
-
-### ----------------------------------------------------
-### 🔧 join_channel — join a PUBLIC channel. Needed for the bot to actually RECEIVE events (new_message,
-### reaction_added, etc.) from that channel — chat:write.public only covers POSTING there without joining,
-### a separate permission from receiving events. Needs channels:join bot scope (see .env.example). Check
-### GET_CHANNEL_DETAILS' `is_member` first if a subscribed trigger never fires with no error anywhere.
-### ----------------------------------------------------
-POST {{base_url}}/actions/execute/SLACK_JOIN_CHANNEL
 Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
@@ -291,7 +278,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "input": { "email": "someone@example.com" }
+  "input": { "email": "nitish@innovalabs.tech" }
 }
 
 ### ----------------------------------------------------
@@ -353,7 +340,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned trigger_instance_id to unsubscribe below
-@slack_new_message_ti = ti_c0af1c02-8f03-4ef6-9af8-da6114a476ec
+@slack_new_message_ti = ti_1703e8be-10a9-4d7b-83fc-11d869ca5819
 
 ### ----------------------------------------------------
 ### 🔧 Check MY trigger subscriptions — every instance this user has, across every app (not just Slack) —
@@ -421,7 +408,7 @@ Content-Type: application/json
 }
 
 ### Copy the returned trigger_instance_id to unsubscribe below
-@slack_new_message_channel_ti = ti_a49df946-dfbf-47f8-b524-8f75d71d9436
+@slack_new_message_channel_ti = ti_b527832c-8000-4cf8-a507-56ad609093a4
 
 ###
 GET {{base_url}}/triggers/instances/{{slack_new_message_channel_ti}}/logs?user_id={{user_id}}
@@ -484,10 +471,11 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Subscribe — reaction_added, scoped to one channel. NO thread_ts here — Slack's reaction_added event
-### only carries the reacted-to message's own `ts` (item.ts), not its parent thread_ts if it's itself a
-### thread reply, so per-thread reaction scoping isn't derivable without an extra conversations.replies
-### lookup (see reactionAdded.ts's TODO — not implemented, config.channel_id only for now).
+### 🔧 Subscribe — reaction_added. config.channel_id scopes to one channel, config.message_ts scopes to
+### reactions on ONE specific message (item.ts — always present on this event, safe to filter on, unlike
+### newMessage's thread_ts). Omit both for "every reaction everywhere". No thread_ts here — a reaction_added
+### event only carries the reacted-to message's own ts, not its parent thread_ts if it's itself a thread
+### reply, so per-thread scoping isn't derivable without an extra conversations.replies lookup.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/slack/reaction_added/subscribe
 Authorization: Bearer {{access_token}}
@@ -501,7 +489,7 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Subscribe — reaction_removed, scoped to one channel (same config shape as reaction_added)
+### 🔧 Subscribe — reaction_removed (same config shape as reaction_added: channel_id and/or message_ts)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/slack/reaction_removed/subscribe
 Authorization: Bearer {{access_token}}
@@ -561,25 +549,6 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 Bad config shape — 400s with a real zod issue naming the trigger, not a silent no-op (channel_id must
-### be a string; trigger_routes.ts validates `config` against THIS trigger's own schema once it knows
-### which trigger this is, not against a generic z.unknown() at the body-parse stage). Note this is a
-### DIFFERENT failure mode than passing a well-typed but wrong value (e.g. a "#name" instead of a real
-### ID) — that's still a valid string, so it parses fine here and just silently never matches any event
-### instead (matchesConfig does a plain equality check, no Slack API call to reject it with an error).
-### ----------------------------------------------------
-POST {{base_url}}/triggers/slack/new_message/subscribe
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
-  "config": { "channel_id": 12345 },
-  "extra_metadata": { "notes": "for the #support-eu channel" }
-}
-
-### ----------------------------------------------------
 ### 🔧 Slack's own Events API delivery endpoint — this is what Slack calls, not something a client calls
 ### directly. Included here for reference/local testing (e.g. replaying a captured payload with curl).
 ### First-time setup: Slack sends a `url_verification` challenge here and expects it echoed back.
@@ -603,6 +572,48 @@ Authorization: Bearer {{admin_access_token}}
 ### 🔧 Admin — trigger instances
 GET {{base_url}}/admin/triggers
 Authorization: Bearer {{admin_access_token}}
+
+# ============================================================================
+# LISTEN TO EVERYTHING THIS USER HAS TRIGGERED — two separate concerns, both needed together
+# ============================================================================
+#
+# 1) SUBSCRIBE to every trigger you want live events for. There is no bulk "subscribe to all triggers"
+#    endpoint — POST /triggers/:app/:trigger/subscribe is per trigger key, same as every individual
+#    subscribe call above. To cover every Gmail/Slack trigger that exists right now: 4 Gmail (new_email,
+#    new_sent_email, new_starred_email, new_draft — all poll-mode, need worker.ts running) + 8 Slack
+#    (new_message, message_edited, message_deleted, reaction_added, reaction_removed, user_joined_channel,
+#    channel_created, file_shared — all webhook-mode, delivered via /webhooks/slack/events, see GET
+#    /triggers below for the live/authoritative list instead of hand-counting). Point every subscribe call
+#    at the SAME webhook_url and every fired event — across every app/trigger you subscribed to — lands on
+#    that one URL, tagged with its own `type` (e.g. "gmail.new_email" / "slack.reaction_added") in the
+#    envelope so your receiver can tell them apart. No per-instance filter (config) on any of them = fires
+#    for everything that trigger can see, not scoped to one channel/thread/message.
+#
+### 🔧 List every real trigger that exists, across every app — the authoritative source for step 1 above,
+### not this file's hand-maintained comment.
+GET {{base_url}}/triggers
+Authorization: Bearer {{access_token}}
+#
+# 2) READ what's already fired — GET /triggers/logs (used throughout this file per-instance via
+#    GET /triggers/instances/:id/logs) also has a NOT-scoped-to-one-instance form: every log row across
+#    EVERY trigger this user has ever subscribed to, Gmail and Slack together, one unified list. Quiet
+#    "checked, found nothing" poll rows are hidden by default (Gmail only — Slack is webhook-mode, it has
+#    no poll-attempt rows at all); `data_found`/`data_sendable` on each row tell you "was this a real event"
+#    and "did delivery to webhook_url actually succeed" without needing to parse `status`/`error` yourself.
+#
+### 🔧 Every event this user has ever had fire, across every app/trigger — most recent first, default
+### limit 20, with_payload=true (each row inlines the exact envelope delivered, no second call needed).
+GET {{base_url}}/triggers/logs?user_id={{user_id}}
+Authorization: Bearer {{access_token}}
+#
+### 🔧 Same thing, narrowed to just this app (drop &app= to see Gmail+Slack together again)
+GET {{base_url}}/triggers/logs?user_id={{user_id}}&app=slack
+Authorization: Bearer {{access_token}}
+#
+### 🔧 Include the normally-hidden quiet poll rows too (only meaningful for Gmail's poll-mode triggers —
+### confirms the scheduler is actually ticking, separate from "did anything real happen")
+GET {{base_url}}/triggers/logs?user_id={{user_id}}&include_empty_polls=true
+Authorization: Bearer {{access_token}}
 
 ### 🔧 Admin — action/trigger call log
 GET {{base_url}}/admin/logs?limit=20

@@ -23,23 +23,27 @@ const reactionRemovedPayload: z.ZodType<ReactionRemovedEvent> = z.object({
 });
 
 export interface ReactionRemovedConfig {
-  channel_id?: string; // real channel ID, NOT a "#name"; same "no thread_ts" reasoning as reactionAdded.ts's ReactionAddedConfig
+  channel_id?: string; // real channel ID, NOT a "#name"; same reasoning as reactionAdded.ts's ReactionAddedConfig
+  message_ts?: string; // optional — scope to reactions removed from ONE specific message; same "always
+  // present on this event, safe to filter on" reasoning as reactionAdded.ts's message_ts.
 }
 
 const reactionRemovedConfig: z.ZodType<ReactionRemovedConfig> = z.object({
   channel_id: z.string().optional(),
+  message_ts: z.string().optional(),
 });
 
 export const reactionRemoved: TriggerDefinition<unknown, ReactionRemovedEvent, ReactionRemovedConfig> = {
   key: "reaction_removed",
   description:
-    "Fires when someone removes an emoji reaction from a message in a channel the connected app can see. Pass config.channel_id to scope to one channel.",
+    "Fires when someone removes an emoji reaction from a message in a channel the connected app can see. Pass config.channel_id to scope to one channel, and/or config.message_ts to scope to reactions on one specific message — omit both to fire for every reaction everywhere.",
   mode: "webhook",
   payload: reactionRemovedPayload,
   config: reactionRemovedConfig,
   matchesConfig(rawPayload, config) {
     const event = rawPayload as SlackReactionEventPayload;
     if (config.channel_id && event.item.channel !== config.channel_id) return false;
+    if (config.message_ts && event.item.ts !== config.message_ts) return false;
     return true;
   },
   async handleWebhook(_connection, rawPayload) {

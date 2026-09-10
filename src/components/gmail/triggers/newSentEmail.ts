@@ -1,7 +1,7 @@
 // Real trigger, same shape as Pipedream's Gmail sources — fires when a message is sent from the connected
 // account. Gmail's history API has no dedicated "messageSent" historyType, so this watches messageAdded
 // (same as new_email) and filters for messages carrying the SENT system label — sending a message always
-// adds it. Same history.list + historyId cursor mechanism as new_email/new_labeled_email.
+// adds it. Same history.list + historyId cursor mechanism as new_email.
 
 import { z } from "zod";
 import type { TriggerDefinition } from "../../../types";

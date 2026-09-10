@@ -229,22 +229,6 @@ Content-Type: application/json
 @gmail_new_email_ti = ti_5598d8ca-a06b-4f6b-8ce7-50dbc14a9982
 
 ### ----------------------------------------------------
-### 🔧 Subscribe — new_labeled_email (fires when a label is applied to a message; ALL labels, no per-instance filter yet)
-### ----------------------------------------------------
-POST {{base_url}}/triggers/gmail/new_labeled_email/subscribe
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
-  "extra_metadata": { "notes": "for the #support-eu channel" }
-}
-
-### 
-@gmail_new_labeled_email_ti = ti_4336fc00-9b22-424c-bcf6-c2fed42e4cdd
-
-### ----------------------------------------------------
 ### 🔧 Subscribe — new_sent_email (fires when an email is sent; watches messageAdded + filters the SENT label)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_sent_email/subscribe
@@ -328,7 +312,7 @@ Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Check MY most recent trigger fires — across EVERY Gmail trigger I've subscribed to (new_email,
-### new_draft, new_labeled_email, new_starred_email, new_sent_email all in one call), not just one
+### new_draft, new_starred_email, new_sent_email all in one call), not just one
 ### trigger_instance_id. Each row carries its own trigger_instance_id/trigger_key. Same with_payload=true/
 ### limit=20 defaults as the per-instance version below.
 ### ----------------------------------------------------
