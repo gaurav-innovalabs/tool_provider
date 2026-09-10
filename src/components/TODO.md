@@ -1,7 +1,7 @@
 # Component structure — R&D & open decisions
 
 This is where we decide *how a component (App) is declared and organized on disk* before we have 20+ of
-them and a rename/refactor gets expensive. Grounded in `research/platforms/*.md` — not guessing. Everything
+them and a rename/refactor gets expensive. Grounded in `docs/research/other-platforms/*.md` — not guessing. Everything
 here is a decision to make, not yet decided; mark your call inline or reply and I'll fold it in.
 
 ## Naming: "components" not "apps"
@@ -14,7 +14,7 @@ Composio calls the same idea a **Toolkit**; Activepieces calls it a **Piece**. W
 
 ## How the 3 platforms we can actually read source for structure this
 
-| | Unit of definition | File shape | Shared/common code | Scale (per research/comparison.md) |
+| | Unit of definition | File shape | Shared/common code | Scale (per docs/research/comparison.md) |
 |---|---|---|---|---|
 | **Pipedream** | one `.app.mjs` (client) + N `sources/*.mjs` (triggers) + N `actions/*.mjs` | plain JS object: `{ key, name, version, props, methods, run() }` — same shape reused for action AND trigger (trigger just uses `$emit` instead of `return`) | `sources/common/*.mjs` per-app (e.g. `common-webhook.mjs` holds the activate/deactivate/dedupe lifecycle, imported by every trigger variant) | 2,700+ components, huge but each one is tiny/independent |
 | **Composio** | one Toolkit, described server-side (SDK just fetches its schema) — not really a "file per integration" model in the OSS repo at all | N/A — OSS repo is the client SDK, not the toolkit definitions | N/A (server-side) | 1000+ toolkits, but this is exactly the "too many components, too much SDK surface" pattern you said to avoid |
@@ -41,7 +41,7 @@ need shared helpers between their own action/trigger files *yet*.
       `ActionDefinition.run(connection, input)` / `TriggerDefinition.poll(connection, cursor)` signatures are
       a narrower version of the same idea (inject `connection`, return values instead of `$emit`/mutate).
       Worth deciding now whether we'll need more injected capabilities later (a KV store per trigger
-      instance, like Pipedream's `$.service.db` — see `research/triggers-patterns.md` "platform-injected
+      instance, like Pipedream's `$.service.db` — see `docs/research/triggers-patterns.md` "platform-injected
       capabilities") and widen the function signature once, vs. keep it narrow and pass a `ctx` object only
       when Phase 3's scheduler actually needs to hand triggers a KV store.
 

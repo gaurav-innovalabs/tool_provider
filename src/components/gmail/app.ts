@@ -1,4 +1,4 @@
-// Gmail App definition. Reference: research/gmail-deep-dive.md, research/platforms/pipedream.md.
+// Gmail App definition. Reference: docs/research/gmail-deep-dive.md, docs/research/other-platforms/pipedream.md.
 // Kept deliberately small (Pipedream-style: few useful actions), not a 1:1 wrap of the Gmail API.
 
 import type { AppDefinition } from "../../types";

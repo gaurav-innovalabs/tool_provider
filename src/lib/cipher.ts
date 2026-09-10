@@ -1,4 +1,4 @@
-// Encrypt-at-rest for Connection secrets, per research/auth-patterns.md #5 (n8n's Cipher-service pattern —
+// Encrypt-at-rest for Connection secrets, per docs/research/auth-patterns.md #5 (n8n's Cipher-service pattern —
 // one central service, secrets held decrypted only transiently, never persisted plaintext). AES-256-GCM via
 // node:crypto (Bun ships full Node crypto compat; there's no Bun-native primitive for this per CLAUDE.md's
 // Bun-API list, which only covers fs/sqlite/redis/postgres/websocket, not general encryption).

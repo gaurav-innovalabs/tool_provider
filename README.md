@@ -14,6 +14,8 @@ bun run index.ts
 
 This project was created using `bun init` in bun v1.4.0. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
 
+See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`PHASES.md`](PHASES.md), [`MCP_GUIDE.md`](MCP_GUIDE.md), and [`docs/`](docs/README.md) (design research) for more.
+
 ## Testing
 
 Tests live in `test_components/<app>/...`, mirroring `src/components/<app>/...` rather than being colocated

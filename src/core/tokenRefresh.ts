@@ -1,4 +1,4 @@
-// Proactive refresh-ahead-of-expiry, per research/auth-patterns.md #4 (Nango's real pattern, verified
+// Proactive refresh-ahead-of-expiry, per docs/research/auth-patterns.md #4 (Nango's real pattern, verified
 // during R&D) — refresh a few minutes BEFORE expiry, not reactively on a 401. Called once at the top of
 // every real provider call site (src/api/action_routes.ts before action.run(), src/core/scheduler.ts
 // before trigger.poll()) — webhook-mode delivery (Slack) never calls this, it doesn't make outbound
@@ -18,7 +18,7 @@ import { connectionStore } from "./store";
 import type { AppDefinition, Connection } from "../types";
 
 // Refresh this far ahead of the real expiry, not exactly at it — avoids a request racing an
-// about-to-expire token. 5 minutes, per research/auth-patterns.md #4's "margin constant" recommendation.
+// about-to-expire token. 5 minutes, per docs/research/auth-patterns.md #4's "margin constant" recommendation.
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
 function needsRefresh(connection: Connection): boolean {

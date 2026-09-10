@@ -8,7 +8,7 @@
 // Built on WebStandardStreamableHTTPServerTransport (`@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js`)
 // — its `handleRequest(req: Request): Promise<Response>` is Web Standard (Fetch API) shaped, confirmed
 // against the SDK's own .d.ts to work directly with Bun.serve() routes, no Express/Node-http adapter
-// needed. This resolves the open question left in research/mcp-sdk-notes.md.
+// needed. This resolves the open question left in docs/research/mcp-sdk-notes.md.
 
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildMcpServer } from "./server";
@@ -30,7 +30,7 @@ function extractBearerToken(req: Request): string | null {
     return auth.slice(7).trim();
   }
   // Fallback: `?token=` query param — mirrors Pipedream's documented header-or-query-param flexibility
-  // (research/mcp-connect-flow.md), useful for MCP clients that only let you configure a URL, not headers.
+  // (docs/research/mcp-connect-flow.md), useful for MCP clients that only let you configure a URL, not headers.
   const url = new URL(req.url);
   return url.searchParams.get("token");
 }

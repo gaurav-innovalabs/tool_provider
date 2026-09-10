@@ -1,4 +1,4 @@
-// Poll via history.list + historyId cursor (Pipedream's pattern, per research/gmail-deep-dive.md), NOT
+// Poll via history.list + historyId cursor (Pipedream's pattern, per docs/research/gmail-deep-dive.md), NOT
 // messages.list + timestamp (n8n/Activepieces' pattern, which needed 4 extra tuning constants to be
 // correct at the edges). No SDK — plain fetch, same as every action.
 //
