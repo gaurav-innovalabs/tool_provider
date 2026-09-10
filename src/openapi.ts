@@ -39,7 +39,7 @@ function actionPaths() {
     "/actions": {
       get: {
         tags: ["actions"],
-        summary: "[Internal] List/search available tools",
+        summary: "List/search available tools",
         description: "~ Composio's `GET /tools`. Returns every real action currently in the registry — cannot list a tool that doesn't exist in code. Optional `?q=` filters by a case-insensitive word match against `tool_slug` + description.",
         parameters: [{ name: "q", in: "query", required: false, schema: { type: "string" }, description: "Free-text filter, e.g. \"gmail\" or \"send email\"." }],
         responses: {
@@ -73,7 +73,7 @@ function actionPaths() {
     "/actions/{tool_slug}": {
       get: {
         tags: ["actions"],
-        summary: "[Internal] Get one tool's real input/output schema",
+        summary: "Get one tool's real input/output schema",
         description: "~ Composio's `GET /tools/{slug}`. `input_schema`/`output_schema` are this action's actual zod schemas (z.toJSONSchema()) — call this on demand for the one tool_slug you're about to execute, instead of every action's schema being pre-inlined into every path.",
         parameters: [{ name: "tool_slug", in: "path", required: true, schema: toolSlugSchema }],
         responses: {
@@ -102,7 +102,7 @@ function actionPaths() {
     "/actions/execute/{tool_slug}": {
       post: {
         tags: ["actions"],
-        summary: "[Internal] Execute a tool",
+        summary: "Execute a tool",
         description: "~ Composio's `POST /tools/execute/{tool_slug}`. `input` is validated against the real action's zod schema (fetch it first via `GET /actions/{tool_slug}`) before it runs, and the result is validated against its output schema before it's returned.",
         parameters: [{ name: "tool_slug", in: "path", required: true, schema: toolSlugSchema }],
         requestBody: {
@@ -158,7 +158,7 @@ export const openApiSpec = {
     "/users": {
       post: {
         tags: ["users"],
-        summary: "[Internal] Create a user",
+        summary: "Create a user",
         description: "Creates the internal identity a client acts on behalf of. `metadata` is stored opaquely, never validated or interpreted.",
         requestBody: {
           required: false,
@@ -193,7 +193,7 @@ export const openApiSpec = {
     "/connections": {
       get: {
         tags: ["connections"],
-        summary: "[Internal] List a user's connections (~ Composio's GET /connected_accounts, filtered to one user)",
+        summary: "List a user's connections (~ Composio's GET /connected_accounts, filtered to one user)",
         description: "Client-facing 'what have I connected' — required `user_id`, optional `app` to narrow to one app. Secrets always redacted, same as GET /connections/{id}.",
         parameters: [
           { name: "user_id", in: "query", required: true, schema: { type: "string" } },
@@ -209,7 +209,7 @@ export const openApiSpec = {
       },
       post: {
         tags: ["connections"],
-        summary: "[Internal] Request a new connection",
+        summary: "Request a new connection",
         description:
           "NEVER carries secrets or a field schema, for any auth type — the request is always just " +
           "{user_id, app, extra_metadata?}, and the response is always just {connection_id, status, " +
@@ -262,7 +262,7 @@ export const openApiSpec = {
     "/connections/{id}": {
       get: {
         tags: ["connections"],
-        summary: "[Internal] Get connection status",
+        summary: "Get connection status",
         description: "Secrets are always redacted from this response, regardless of auth type.",
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" }, description: "connection_id" },
@@ -277,7 +277,7 @@ export const openApiSpec = {
       },
       delete: {
         tags: ["connections"],
-        summary: "[Internal] Revoke a connection (~ Composio's DELETE /connected_accounts/{id})",
+        summary: "Revoke a connection (~ Composio's DELETE /connected_accounts/{id})",
         description: "Doesn't delete the row (action_logs/trigger rows FK to it) — flips `status` to `revoked` and clears `secrets`. A later manage_connection call starts a fresh connect flow. 404 (not 403) on a mismatched `user_id`, to avoid revealing that a connection_id exists at all to a non-owner.",
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" }, description: "connection_id" },
@@ -296,7 +296,7 @@ export const openApiSpec = {
     "/connect/{token}": {
       get: {
         tags: ["connections"],
-        summary: "[External — NOT gated by our bearer token] The one browser-facing connect page — handles both oauth2 and api_key",
+        summary: "[Internal use] The one browser-facing connect page — handles both oauth2 and api_key",
         description:
           "Public, NOT gated by our bearer token (an end user's browser opens this directly and can't " +
           "attach an Authorization header). `token` is single-use and Redis-backed (src/lib/redis.ts), " +
@@ -313,7 +313,7 @@ export const openApiSpec = {
       },
       post: {
         tags: ["connections"],
-        summary: "[External — NOT gated by our bearer token] Submit the field-collection form (api_key/custom only)",
+        summary: "[Internal use] Submit the field-collection form (api_key/custom only)",
         description:
           "Standard HTML form POST (application/x-www-form-urlencoded), not JSON — the browser submits " +
           "this itself, no JS involved. Public, NOT gated by our bearer token — same reasoning as GET " +
@@ -340,7 +340,7 @@ export const openApiSpec = {
     "/triggers": {
       get: {
         tags: ["triggers"],
-        summary: "[Internal] List available trigger TYPES (~ Composio's GET /triggers_types)",
+        summary: "List available trigger TYPES (~ Composio's GET /triggers_types)",
         description: "Every real trigger currently in the registry — generated live, same discipline as GET /actions. Distinct from GET /triggers/instances below: this lists what CAN be subscribed to, not what a user already has subscribed.",
         responses: {
           "200": {
@@ -353,7 +353,7 @@ export const openApiSpec = {
     "/triggers/instances": {
       get: {
         tags: ["triggers"],
-        summary: "[Internal] List a user's subscribed trigger instances",
+        summary: "List a user's subscribed trigger instances",
         description: "Client-facing 'which triggers have I actually subscribed to' — required `user_id`, optional `app` to narrow.",
         parameters: [
           { name: "user_id", in: "query", required: true, schema: { type: "string" } },
@@ -371,7 +371,7 @@ export const openApiSpec = {
     "/triggers/instances/{id}/logs": {
       get: {
         tags: ["triggers"],
-        summary: "[Internal] What a trigger instance has actually fired (~ Stripe CLI's `events list`)",
+        summary: "What a trigger instance has actually fired (~ Stripe CLI's `events list`)",
         description: "Every poll attempt and webhook delivery attempt for one instance, newest first — status, which webhook_url each attempt went to, the error if any, and `resendable` (whether POST /triggers/logs/{log_id}/resend will work on it). `user_id` required and checked against the instance's own owner.",
         parameters: [
           { name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" },
@@ -401,7 +401,7 @@ export const openApiSpec = {
     "/triggers/logs/{log_id}": {
       get: {
         tags: ["triggers"],
-        summary: "[Internal] Get one trigger event's full body (~ Stripe's `GET /v1/events/{id}`)",
+        summary: "Get one trigger event's full body (~ Stripe's `GET /v1/events/{id}`)",
         description: "`log_id` IS the event id for a delivery row (`evt_...` — src/core/scheduler.ts's deliverEvent/resendDelivery generate one id, used as both the envelope's own `id` and this row's `log_id`). Returns the full row including `payload` — the actual delivered body — which GET /triggers/instances/{id}/logs deliberately omits. `user_id` required and checked against the log's own owner.",
         parameters: [
           { name: "log_id", in: "path", required: true, schema: { type: "string" } },
@@ -420,7 +420,7 @@ export const openApiSpec = {
     "/triggers/logs/{log_id}/resend": {
       post: {
         tags: ["triggers"],
-        summary: "[Internal] Resend a trigger delivery (~ Stripe CLI's `events resend`)",
+        summary: "Resend a trigger delivery (~ Stripe CLI's `events resend`)",
         description: "Re-POSTs an already-captured delivery's exact payload (same event id/timestamp — a resend, not a new event) to the trigger instance's CURRENT webhook_url, which may differ from the one the log row originally recorded if it's since been updated. Only works on a `resendable` log (one with a captured payload — webhook-delivery rows, not poll-attempt rows). Writes its own new trigger_logs row, itself resendable.",
         parameters: [{ name: "log_id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
@@ -444,7 +444,7 @@ export const openApiSpec = {
     "/triggers/{app}/{trigger}/subscribe": {
       post: {
         tags: ["triggers"],
-        summary: "[Internal] Subscribe to a Trigger",
+        summary: "Subscribe to a Trigger",
         description: "Creates a TriggerInstance for `connection_id`, picked up by the scheduler (poll-mode) or the matching webhook route (webhook-mode, e.g. Slack) once it exists.",
         parameters: [
           { name: "app", in: "path", required: true, schema: { type: "string" }, example: "gmail" },
@@ -481,7 +481,7 @@ export const openApiSpec = {
     "/triggers/{id}": {
       delete: {
         tags: ["triggers"],
-        summary: "[Internal] Unsubscribe (delete a trigger instance)",
+        summary: "Unsubscribe (delete a trigger instance)",
         description: "Real delete, not a soft-disable — no pause/resume yet (delete + re-subscribe is the only option, see PHASES.md Phase 3's open item). Its trigger_logs history is deleted with it (cascade).",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" }],
         responses: {
@@ -491,7 +491,7 @@ export const openApiSpec = {
       },
       patch: {
         tags: ["triggers"],
-        summary: "[Internal] Update a trigger instance's extra_metadata",
+        summary: "Update a trigger instance's extra_metadata",
         description: "Metadata-only update — the client's own notes/tags space, editable after subscribe time (unlike Connection.extra_metadata, which is write-once). Everything else about the instance (webhook_url, poll_interval_ms, ...) is immutable post-subscribe: delete + re-subscribe is the only way to change those.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" }],
         requestBody: {
@@ -512,7 +512,7 @@ export const openApiSpec = {
     "/oauth/callback/{app}": {
       get: {
         tags: ["webhooks"],
-        summary: "[External — NOT gated by our bearer token] OAuth redirect target",
+        summary: "[Internal use] OAuth redirect target",
         description: "The end user's browser lands here after approving the provider's consent screen. Not called by our own client — reached via /connections/{id}/authorize's redirect. Public, NOT gated by our bearer token, same reasoning as /connect/{token}.",
         security: [],
         parameters: [
@@ -528,7 +528,7 @@ export const openApiSpec = {
     "/webhooks/{app}/events": {
       post: {
         tags: ["webhooks"],
-        summary: "[External — NOT gated by our bearer token] Provider event push (Events API)",
+        summary: "[Internal use] Provider event push (Events API)",
         description:
           "One subscription URL per app — not per connection or per TriggerInstance. Register this exact URL as the Request URL in the provider's app config (for Slack: Event Subscriptions). Public, NOT gated by our bearer token — each provider verifies itself instead (Slack: x-slack-signature/x-slack-request-timestamp headers over the raw body, checked against SLACK_SIGNING_SECRET). Only `slack` is implemented today; other app slugs get 404. Gmail has no webhook receiver — its `new_email` family of triggers is poll-based only (src/core/scheduler.ts), not push.",
         security: [],
