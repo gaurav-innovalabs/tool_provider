@@ -24,8 +24,17 @@ const envSchema = z.object({
       message: "ENCRYPTION_KEY must decode (base64) to exactly 32 bytes for AES-256. Generate with `openssl rand -base64 32`.",
     }),
 
-  // TODO(ask), see src/server.ts — not wired into any route yet, so not enforced as required here either.
-  AuthKey: z.string().optional(),
+  // Gates the whole REST API to internal callers only — not for public use (see src/lib/apiAuth.ts).
+  // Required, no fallback, same treatment as ENCRYPTION_KEY: a missing token must fail loudly at startup,
+  // not silently leave every route open. Generate with `openssl rand -hex 32`.
+  ACCESS_TOKEN: z
+    .string()
+    .min(16, "ACCESS_TOKEN is required — every REST API call must present it as a Bearer token. Generate one with `openssl rand -hex 32`."),
+  // Same shape, additionally required on /admin/* (src/api/admin_routes.ts). Also works anywhere
+  // ACCESS_TOKEN does — an admin can do everything a normal internal caller can, plus admin routes.
+  ADMIN_ACCESS_TOKEN: z
+    .string()
+    .min(16, "ADMIN_ACCESS_TOKEN is required — gates /admin/* routes. Generate one with `openssl rand -hex 32`."),
 
   SLACK_CLIENT_ID: z.string().optional().default(""),
   SLACK_CLIENT_SECRET: z.string().optional().default(""),
@@ -73,7 +82,8 @@ export const config = {
 
   security: {
     ENCRYPTION_KEY: env.ENCRYPTION_KEY,
-    AuthKey: env.AuthKey,
+    ACCESS_TOKEN: env.ACCESS_TOKEN,
+    ADMIN_ACCESS_TOKEN: env.ADMIN_ACCESS_TOKEN,
   },
 
   apps: {

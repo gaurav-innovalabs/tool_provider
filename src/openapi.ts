@@ -66,12 +66,13 @@ export const openApiSpec = {
     version: "0.2.0",
   },
   servers: [{ url: "/", description: "This server" }],
+  security: [{ bearerAuth: [] }],
   tags: [
     { name: "users", description: "Client-facing user lifecycle." },
     { name: "connections", description: "Client-facing connection lifecycle — request, check status, and (oauth2 only) the browser-facing authorize redirect." },
     { name: "actions", description: "Invoke an App's Action against a Connection. One path per real action, schemas generated from the action's own zod definitions." },
     { name: "triggers", description: "Trigger subscription management. Not implemented yet (Phase 3) — routes exist and return 'not implemented'." },
-    { name: "webhooks", description: "Inbound calls from external providers (OAuth redirect). Not authenticated with our AuthKey — see src/api/webhook_routes.ts." },
+    { name: "webhooks", description: "Inbound calls from external providers (OAuth redirect). Not gated by our bearer token — see src/api/webhook_routes.ts." },
     { name: "admin", description: "Internal, read-only inspection API. No UI — API only, per spec. Not implemented yet — routes exist and return 'not implemented'." },
   ],
   paths: {
@@ -185,11 +186,13 @@ export const openApiSpec = {
         tags: ["connections"],
         summary: "The one browser-facing connect page — handles both oauth2 and api_key",
         description:
-          "Public, not authenticated with our AuthKey (an end user's browser opens this directly). `token` " +
-          "is single-use and Redis-backed (src/lib/redis.ts), resolved to a connection_id server-side — the " +
-          "raw connection_id never appears in this URL. oauth2 apps: 302 redirect to the provider's real " +
-          "consent screen. api_key apps: renders our own plain-HTML field-collection form (see " +
-          "src/api/connection_routes.ts's fieldFormPage()).",
+          "Public, NOT gated by our bearer token (an end user's browser opens this directly and can't " +
+          "attach an Authorization header). `token` is single-use and Redis-backed (src/lib/redis.ts), " +
+          "resolved to a connection_id server-side — the raw connection_id never appears in this URL, and " +
+          "that single-use token IS this route's real auth boundary. oauth2 apps: 302 redirect to the " +
+          "provider's real consent screen. api_key apps: renders our own plain-HTML field-collection form " +
+          "(see src/api/connection_routes.ts's fieldFormPage()).",
+        security: [],
         parameters: [{ name: "token", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": { description: "The field-collection form (api_key), or an HTML error page for an expired/used token, unknown connection, or already-completed connection — both are 200 (a browser page, not an API error)." },
@@ -201,10 +204,12 @@ export const openApiSpec = {
         summary: "Submit the field-collection form (api_key/custom only)",
         description:
           "Standard HTML form POST (application/x-www-form-urlencoded), not JSON — the browser submits " +
-          "this itself, no JS involved. Validates required fields, then calls the App's real " +
+          "this itself, no JS involved. Public, NOT gated by our bearer token — same reasoning as GET " +
+          "above. Validates required fields, then calls the App's real " +
           "testConnection() BEFORE marking the connection active. On failure, re-renders the same form with " +
           "the real provider error (token stays valid — the user can just retry). On success, the token is " +
           "deleted (single-use) and an HTML success page is shown.",
+        security: [],
         parameters: [{ name: "token", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
@@ -256,7 +261,8 @@ export const openApiSpec = {
       get: {
         tags: ["webhooks"],
         summary: "OAuth redirect target",
-        description: "The end user's browser lands here after approving the provider's consent screen. Not called by our own client — reached via /connections/{id}/authorize's redirect.",
+        description: "The end user's browser lands here after approving the provider's consent screen. Not called by our own client — reached via /connections/{id}/authorize's redirect. Public, NOT gated by our bearer token, same reasoning as /connect/{token}.",
+        security: [],
         parameters: [
           { name: "app", in: "path", required: true, schema: { type: "string" } },
           { name: "code", in: "query", required: true, schema: { type: "string" } },
@@ -337,6 +343,13 @@ export const openApiSpec = {
     },
   },
   components: {
+    securitySchemes: {
+      // Matches src/lib/apiAuth.ts exactly: `Authorization: Bearer <ACCESS_TOKEN or ADMIN_ACCESS_TOKEN>`.
+      // Click "Authorize" above and paste one in — /admin/* routes require ADMIN_ACCESS_TOKEN specifically,
+      // every other gated route accepts either. /connect/{token}, /oauth/callback/{app}, and
+      // /webhooks/slack/events are intentionally NOT covered by this (see their own route file comments).
+      bearerAuth: { type: "http", scheme: "bearer", description: "Internal-only access token — see .env.example's ACCESS_TOKEN / ADMIN_ACCESS_TOKEN." },
+    },
     schemas: {
       ConnectionStatus: { type: "string", enum: ["pending", "active", "revoked", "error"] },
       Connection: {

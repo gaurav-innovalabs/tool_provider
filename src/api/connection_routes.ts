@@ -50,6 +50,7 @@ function fieldFormPage(app: AppDefinition, token: string, errorMessage?: string)
   });
 }
 
+// Client-facing, internal-only — gated with the bearer token in server.ts (src/lib/apiAuth.ts).
 export const connectionRoutes = {
   "/connections": {
     POST: async (req: Request) => {
@@ -117,8 +118,13 @@ export const connectionRoutes = {
       return Response.json(redact(connection));
     },
   },
+};
 
-  // Public, browser-visited — the ONE url handed out by POST /connections above, for either auth type.
+// Public, browser-visited, NOT gated by the bearer token — the ONE url handed out by POST /connections
+// above, for either auth type. An end user's browser opens this directly and has no way to attach our
+// internal Authorization header; it's already protected by its own single-use, short-lived Redis token
+// (src/lib/redis.ts), which is the actual auth boundary here.
+export const publicConnectRoutes = {
   "/connect/:token": {
     GET: async (req: Request & { params: { token: string } }) => {
       const connectionId = await resolveConnectToken(req.params.token);

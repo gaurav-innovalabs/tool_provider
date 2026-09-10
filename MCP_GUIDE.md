@@ -15,22 +15,29 @@ handler's signature is `Request -> Response`, not a callable function). If a thi
 same "get-or-create connection" / "run an action for a user" logic, factor it into a shared `core/*.ts`
 helper then — not worth it for two call sites yet.
 
-## The seven meta-tools
+## The eleven meta-tools
 
 | Tool | Wraps | Not-connected behavior |
 |---|---|---|
 | `search_tools` | `listApps()` (`src/core/registry.ts`), keyword match | n/a |
 | `get_tool_schema` | `z.toJSONSchema()` on one action's real input/output zod schemas | n/a |
 | `manage_connection` | Same three states `POST /connections` already returns | n/a — this tool's whole job IS surfacing `connect_url` |
+| `list_connections` | Same as `GET /connections?user_id=&app=` | n/a |
 | `wait_for_connection` | Polls `connectionStore.get()` every 3s until active/timeout/failed | n/a |
-| `execute_tool` | Same dispatch as `POST /actions/:app/:action` | Returns `{status:"not_connected", connect_url}` instead of a 409 |
+| `execute_tool` | Same dispatch as `POST /actions/execute/:tool_slug` | Returns `{status:"not_connected", connect_url}` instead of a 409 |
 | `list_triggers` | `listApps()`'s trigger definitions, same data `GET /triggers` returns | n/a |
 | `subscribe_trigger` | Same as `POST /triggers/:app/:trigger/subscribe`, but resolves the connection from `user_id`+`app` instead of requiring a `connection_id` up front | Returns `{status:"not_connected", connect_url}` instead of a 409 |
+| `list_trigger_instances` | Same as `GET /triggers/instances?user_id=&app=` — subscribed instances, not available types | n/a |
+| `list_trigger_logs` | Same as `GET /triggers/instances/{id}/logs` — Stripe-CLI `events list`-style run history | n/a |
+| `resend_trigger_webhook` | Same as `POST /triggers/logs/{log_id}/resend` — Stripe-CLI `events resend`-style replay | n/a |
 
 `search_tools`/`get_tool_schema`/`manage_connection`/`execute_tool`/`list_triggers`/`subscribe_trigger` are
 the confirmed Composio/Pipedream pattern (`research/mcp-connect-flow.md`); `wait_for_connection` fills the
 one real gap in that pattern — without it, an agent has no way to know a connection actually completed
-other than blindly retrying.
+other than blindly retrying. `list_connections`/`list_trigger_instances`/`list_trigger_logs`/
+`resend_trigger_webhook` (Phase 4.6, `PHASES.md`) close the "what have I already connected/subscribed, what
+has it actually fired, can I replay one" gap — ownership-checked against `userId` the same way REST checks
+an explicit `user_id`.
 
 Schemas: `src/mcp/types.ts`. Implementations: `src/mcp/metaTools.ts` (real, not stubbed — reuses
 `ensureFreshConnection`, `actionLogStore`, encryption-at-rest, everything Phase 1-4 already built).
@@ -75,8 +82,8 @@ Requires two env vars, one optional third (**not** in `.env`):
 
 - `MCP_USER_ID` — which `User` (`usr_...`, from `POST /users`) this session acts as. Bound once for the
   whole process — never passed per tool call.
-- `MCP_AUTH_KEY` — must match `config.security.AuthKey` (the `.env` `AuthKey` var). Checked once at
-  startup, fail-closed.
+- `MCP_AUTH_KEY` — must match `config.security.ACCESS_TOKEN` or `config.security.ADMIN_ACCESS_TOKEN` (the `.env`
+  `ACCESS_TOKEN`/`ADMIN_ACCESS_TOKEN` vars). Checked once at startup, fail-closed.
 - `MCP_APPS` (optional) — comma-separated app scope, see above.
 
 ```json
@@ -87,7 +94,7 @@ Requires two env vars, one optional third (**not** in `.env`):
       "args": ["run", "/absolute/path/to/tool_provider_project/mcp.ts"],
       "env": {
         "MCP_USER_ID": "usr_...",
-        "MCP_AUTH_KEY": "<same value as .env's AuthKey>"
+        "MCP_AUTH_KEY": "<same value as .env's ACCESS_TOKEN or ADMIN_ACCESS_TOKEN>"
       }
     }
   }
@@ -102,7 +109,7 @@ through a real page:
 1. Start the API server: `bun run dev` (or `bun index.ts`) — the login page and `/mcp` endpoint are served
    from the same `Bun.serve()` as the REST API (`src/server.ts`).
 2. Open `{BASE_URL}/mcp/login` in a browser.
-3. Type in the access key (same value as `.env`'s `AuthKey`), optionally a comma-separated app scope. A
+3. Type in the access key (same value as `.env`'s `ACCESS_TOKEN` or `ADMIN_ACCESS_TOKEN`), optionally a comma-separated app scope. A
    wrong key re-renders the form with an error.
 4. On success you get a one-time screen with the **MCP server URL** (`{BASE_URL}/mcp`) and a **bearer
    token**. Copy both now — the token is never shown again.
@@ -116,8 +123,8 @@ TODO below).
 ## Auth model — two separate concerns, don't conflate them
 
 1. **"Is this caller allowed to talk to this server at all?"** — `MCP_AUTH_KEY` (stdio) or the `/mcp/login`
-   form's access key (remote), both checked against `config.security.AuthKey`. The REST API's own `AuthKey`
-   gating (`src/server.ts`) is a separate, still-open TODO — not touched by this work.
+   form's access key (remote), both checked against `config.security.ACCESS_TOKEN`/`ADMIN_ACCESS_TOKEN` —
+   the SAME unified bearer tokens that gate the REST API and `/docs` (`src/lib/apiAuth.ts`).
 2. **"Which end user is this?"** — `MCP_USER_ID` (stdio) or the bearer token minted at login (remote),
    resolved to `Connection` rows via the existing `user_id` → `connection_id` model.
 

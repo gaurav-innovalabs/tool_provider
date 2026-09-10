@@ -132,17 +132,15 @@ export function buildMcpServer(userId: string, scope: AppScope = null): McpServe
 
 // stdio-specific bootstrap: resolves userId/authKey/appScope from env (per mcp-connect-flow.md's "bound
 // once at session/config time" pattern, implemented here as process-spawn env vars) and enforces the same
-// AuthKey gate httpServer.ts enforces via login token instead. Kept as its own function (not folded into
+// unified bearer token the REST API and remote-MCP login enforce (src/lib/apiAuth.ts, src/api/mcp_routes.ts)
+// — either ACCESS_TOKEN or ADMIN_ACCESS_TOKEN works. Kept as its own function (not folded into
 // buildMcpServer) so buildMcpServer stays a pure, transport-agnostic builder.
 export function createMcpServer(): McpServer {
   const userId = requireEnv("MCP_USER_ID");
   const authKey = requireEnv("MCP_AUTH_KEY");
 
-  // Same AuthKey concept as config.ts's (still-unenforced-on-REST-routes) `security.AuthKey` — enforced
-  // for real here since this is a brand new entrypoint, not a retrofit onto the existing HTTP routes
-  // (that retrofit is still an open TODO, see src/server.ts's own TODO comment).
-  if (!config.security.AuthKey || authKey !== config.security.AuthKey) {
-    throw new Error("MCP_AUTH_KEY does not match the server's configured AuthKey — refusing to start.");
+  if (authKey !== config.security.ACCESS_TOKEN && authKey !== config.security.ADMIN_ACCESS_TOKEN) {
+    throw new Error("MCP_AUTH_KEY does not match the server's configured ACCESS_TOKEN/ADMIN_ACCESS_TOKEN — refusing to start.");
   }
 
   // Optional: "gmail,slack" restricts this session's tools to those apps only (src/mcp/metaTools.ts's

@@ -1,7 +1,14 @@
 // Swagger UI, served entirely from local static assets (swagger-ui-dist) — no CDN dependency.
 // /openapi.json is the spec (src/openapi.ts). /docs is the Swagger UI page. /docs/* serves the
-// swagger-ui-dist bundle assets it references (js/css/png). Not gated by the AuthKey question in
-// server.ts (TODO(ask) there) — this is documentation, not a data-bearing route.
+// swagger-ui-dist bundle assets it references (js/css/png).
+//
+// Gated by the same bearer token as the rest of the API (server.ts wraps this whole group with
+// withAccessToken, src/lib/apiAuth.ts) — open e.g. /docs?token=<ACCESS_TOKEN> directly in a browser (a
+// plain page navigation can't set an Authorization header), or click Swagger UI's "Authorize" button and
+// paste the token there for "Try it out" calls. Either way this is same-origin, so there's no CORS to
+// configure — the earlier "Failed to fetch" in Swagger UI was a missing-auth-header/network issue, not a
+// CORS one, and adding Access-Control-Allow-Origin would only widen who can call this, the opposite of
+// what's wanted here.
 
 import { openApiSpec } from "../openapi";
 

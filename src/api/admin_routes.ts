@@ -1,11 +1,12 @@
 // Read-only, internal-only. "Nothing else" scoping per spec: /admin/users returns connection_id/app/status
 // only, no secrets, no user_metadata dump. No separate core/admin.ts wrapper (removed: pure pass-through
 // over the stores, route is the only caller).
+//
+// Gated with the stricter of the two bearer tokens — see server.ts, which wraps this whole group with
+// withAdminAccessToken (src/lib/apiAuth.ts): the regular ACCESS_TOKEN is not accepted here, only
+// ADMIN_ACCESS_TOKEN.
 
 import { userStore, connectionStore, triggerInstanceStore, actionLogStore, triggerLogStore } from "../core/store";
-
-// TODO(ask): confirm gating — same AuthKey as the rest, or a stricter/separate admin key since this
-// is meant for us to inspect the system, not for a client integration to call at all?
 
 export const adminRoutes = {
   "/admin/users": {

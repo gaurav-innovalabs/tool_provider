@@ -30,7 +30,8 @@ export const mcpRoutes = {
         return mcpLoginFormPage({ errorMessage: "Access key is required." });
       }
 
-      if (!config.security.AuthKey || body.access_key !== config.security.AuthKey) {
+      // Same unified bearer tokens as the REST API (src/lib/apiAuth.ts) — either one gets you an MCP login.
+      if (body.access_key !== config.security.ACCESS_TOKEN && body.access_key !== config.security.ADMIN_ACCESS_TOKEN) {
         return mcpLoginFormPage({ errorMessage: "That access key isn't valid." });
       }
 
