@@ -10,15 +10,12 @@
 
 import { config } from "../config";
 
-// Header, or `?token=` query param — same fallback as extractBearerToken in src/mcp/httpServer.ts, so a
-// tool that can only set a URL (e.g. opening /docs?token=... directly in a browser) still works.
 export function extractBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth?.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
   }
-  const url = new URL(req.url);
-  return url.searchParams.get("token");
+  return null;
 }
 
 function unauthorized(message: string) {
@@ -44,7 +41,7 @@ function wrap(routes: RouteGroup, isAllowed: (token: string) => boolean, deniedM
     for (const [method, handler] of Object.entries(methods)) {
       wrappedMethods[method] = async (req: Request) => {
         const token = extractBearerToken(req);
-        if (!token) return unauthorized("Missing bearer token — pass 'Authorization: Bearer <token>' or '?token=<token>'.");
+        if (!token) return unauthorized("Missing bearer token — pass 'Authorization: Bearer <token>'.");
         if (!isAllowed(token)) return Response.json({ error: deniedMessage }, { status: 403 });
         return handler(req);
       };

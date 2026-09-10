@@ -20,6 +20,11 @@
 
 @base_url = http://localhost:3005
 
+### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
+### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
+@access_token = REPLACE_ME_ACCESS_TOKEN
+@admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
+
 # ============================================================================
 # COMPARISON — what we have vs. Composio's real API surface (74 endpoints total)
 # ============================================================================
@@ -121,8 +126,8 @@
 # ============================================================================
 
 #### composio ->>> x-api-key: {{api_key}} on every request (a real platform API key)
-#### but we have: no auth enforced yet at all — AuthKey in .env.example is not wired into any route
-#### (see server.ts's TODO). Every request below is unauthenticated until that's built.
+#### but we have: `Authorization: Bearer <ACCESS_TOKEN>` (or ADMIN_ACCESS_TOKEN for /admin/*) on every
+#### gated route (src/lib/apiAuth.ts) — set @access_token/@admin_access_token above from your .env.
 
 ### ----------------------------------------------------
 ### 🔧 API docs (Swagger UI) — generated live from this server's own zod schemas
@@ -131,15 +136,17 @@ GET {{base_url}}/docs
 
 ###
 GET {{base_url}}/openapi.json
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Create a user
 ### ----------------------------------------------------
 POST {{base_url}}/users
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
-  "metadata": { "note": "created from tool_provider.http" }
+  "metadata": { "note": "created from tool_provider.http", "username": "Gaurav" }
 }
 
 ### Copy the returned user_id into this variable for the requests below
@@ -158,6 +165,7 @@ Content-Type: application/json
 #### fieldFormPage()) — no client-side UI work either way, the caller just gets a link to hand to the user.
 ### ----------------------------------------------------
 POST {{base_url}}/connections
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -174,6 +182,7 @@ Content-Type: application/json
 ### the full Slack action + trigger flow once connected.
 ### ----------------------------------------------------
 POST {{base_url}}/connections
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -187,6 +196,7 @@ Content-Type: application/json
 ### 🔧 Connect an app — api_key (SerpApi). Same shape as Gmail/Slack — just a different page behind connect_url.
 ### ----------------------------------------------------
 POST {{base_url}}/connections
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -206,22 +216,27 @@ Content-Type: application/json
 #### there is NO list-all-connections endpoint at all (real gap, noted above). Secrets always redacted.
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{gmail_connection_id}}
+Authorization: Bearer {{access_token}}
 
 ###
 GET {{base_url}}/connections/{{serpapi_connection_id}}
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 List / search tools (~ Composio's GET /tools)
 ### ----------------------------------------------------
 GET {{base_url}}/actions
+Authorization: Bearer {{access_token}}
 
 ###
 GET {{base_url}}/actions?q=gmail
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Get one tool's real schema (~ Composio's GET /tools/{slug})
 ### ----------------------------------------------------
 GET {{base_url}}/actions/GMAIL_SEND_EMAIL
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 List available apps / their actions & triggers
@@ -232,6 +247,7 @@ GET {{base_url}}/actions/GMAIL_SEND_EMAIL
 #### as a "toolkit list". GET /triggers below covers the trigger side the same way.
 ### ----------------------------------------------------
 GET {{base_url}}/openapi.json
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Example action — Gmail: send_email. Full Gmail action list: test_components/gmail/gmail.http
@@ -241,6 +257,7 @@ GET {{base_url}}/openapi.json
 #### both the user and the app. tool_slug is the same flat shape as Composio's (GMAIL_SEND_EMAIL).
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_SEND_EMAIL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -256,6 +273,7 @@ Content-Type: application/json
 ### 🔧 Example action — Slack: post_message. Full Slack action list: test_components/slack/slack.http
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -267,6 +285,7 @@ Content-Type: application/json
 ### 🔧 Example action — SerpApi: search (SerpApi's only action)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SERPAPI_SEARCH
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -280,13 +299,14 @@ Content-Type: application/json
 ### and test_components/slack/slack.http.
 #### composio ->>> GET /triggers_types (per-toolkit, requires x-api-key even for schema-only info).
 #### but we have: GET /triggers, derived live from the registry (same "generated, not hand-maintained"
-#### idea as /openapi.json's action schemas) — no auth required to see what's available. Each entry
+#### idea as /openapi.json's action schemas) — same ACCESS_TOKEN gate as everything else. Each entry
 #### includes default_poll_interval_ms — NOT a global setting, see src/types.ts's TriggerDefinition
 #### comment. Each entry also includes `payload`: real JSON Schema (via z.toJSONSchema) of the `data`
 #### object this trigger delivers to a subscriber's webhook_url — `null` for a trigger that hasn't
 #### declared its schema yet (TriggerDefinition.payload is optional).
 ### ----------------------------------------------------
 GET {{base_url}}/triggers
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Example trigger — subscribe (Gmail new_email). Rest of Gmail's triggers, and Slack's, are in the
@@ -302,6 +322,7 @@ GET {{base_url}}/triggers
 #### envelope: {id, type: "<app>.<trigger_key>", metadata: {trigger_instance_id, connection_id, user_id, app, extra_metadata}, data, timestamp}.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_email/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -317,14 +338,18 @@ Content-Type: application/json
 #### composio ->>> DELETE /trigger_instances/manage/{triggerId}
 ### ----------------------------------------------------
 DELETE {{base_url}}/triggers/{{gmail_new_email_trigger_id}}
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Admin — read-only inspection (no Composio equivalent, our own debug view)
 ### ----------------------------------------------------
 GET {{base_url}}/admin/users
+Authorization: Bearer {{admin_access_token}}
 
 ###
 GET {{base_url}}/admin/triggers
+Authorization: Bearer {{admin_access_token}}
 
 ###
 GET {{base_url}}/admin/logs?limit=20
+Authorization: Bearer {{admin_access_token}}

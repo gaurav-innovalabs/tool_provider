@@ -37,7 +37,7 @@ export function createServer() {
       ...withAccessToken(triggerRoutes),
       ...webhookRoutes,
       ...docsPageRoutes,
-      ...withAccessToken(openApiRoutes),
+      ...openApiRoutes,
       ...docsAssetRoutes,
       ...mcpRoutes,
     },

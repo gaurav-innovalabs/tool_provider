@@ -10,10 +10,16 @@
 
 @base_url = http://localhost:3005
 
+### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
+### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
+@access_token = REPLACE_ME_ACCESS_TOKEN
+@admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
+
 ### ----------------------------------------------------
 ### 🔧 Create a user (skip if you already have one — see root tool_provider.http)
 ### ----------------------------------------------------
 POST {{base_url}}/users
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -29,6 +35,7 @@ Content-Type: application/json
 ### as_user:true and find_messages, see app.ts's extraAuthorizeParams comment).
 ### ----------------------------------------------------
 POST {{base_url}}/connections
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -43,6 +50,7 @@ Content-Type: application/json
 ### 🔧 Check the connection's status — should be "active" once OAuth completes
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{slack_connection_id}}
+Authorization: Bearer {{access_token}}
 
 # ============================================================================
 # ACTIONS (15)
@@ -52,6 +60,7 @@ GET {{base_url}}/connections/{{slack_connection_id}}
 ### 🔧 post_message — post to a channel (as_user:false = bot token, default)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -67,6 +76,7 @@ Content-Type: application/json
 ### 🔧 post_message — as_user:true (posts using the authorizing human's own token, not the bot)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_POST_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -78,6 +88,7 @@ Content-Type: application/json
 ### 🔧 update_message — edit a previously posted message (as_user must match how it was originally sent)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_UPDATE_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -89,6 +100,7 @@ Content-Type: application/json
 ### 🔧 delete_message — delete a message (as_user must match how it was originally sent)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_DELETE_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -100,6 +112,7 @@ Content-Type: application/json
 ### 🔧 add_reaction — add an emoji reaction (name without colons)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_ADD_REACTION
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -111,6 +124,7 @@ Content-Type: application/json
 ### 🔧 remove_reaction — remove an emoji reaction
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_REMOVE_REACTION
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -122,6 +136,7 @@ Content-Type: application/json
 ### 🔧 send_direct_message — DM a user (conversations.open + chat.postMessage)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_SEND_DIRECT_MESSAGE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -133,6 +148,7 @@ Content-Type: application/json
 ### 🔧 list_channels — list channels visible to the app
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_LIST_CHANNELS
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -144,6 +160,7 @@ Content-Type: application/json
 ### 🔧 create_channel — create a channel, public or private
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_CREATE_CHANNEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -158,6 +175,7 @@ Content-Type: application/json
 ### 🔧 set_channel_topic — set a channel's topic
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_SET_CHANNEL_TOPIC
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -169,6 +187,7 @@ Content-Type: application/json
 ### 🔧 invite_user_to_channel — invite one or more users (Slack user ids)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_INVITE_USER_TO_CHANNEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -180,6 +199,7 @@ Content-Type: application/json
 ### 🔧 archive_channel — archive a channel
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_ARCHIVE_CHANNEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -191,6 +211,7 @@ Content-Type: application/json
 ### 🔧 list_users — list workspace members
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_LIST_USERS
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -202,6 +223,7 @@ Content-Type: application/json
 ### 🔧 find_user_by_email — look up a user by email
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_FIND_USER_BY_EMAIL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -213,6 +235,7 @@ Content-Type: application/json
 ### 🔧 upload_file — upload a small text file (base64-encoded bytes)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_UPLOAD_FILE
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -224,6 +247,7 @@ Content-Type: application/json
 ### 🔧 find_messages — search (requires the user token / search:read — see app.ts's extraAuthorizeParams)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/SLACK_FIND_MESSAGES
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -239,6 +263,7 @@ Content-Type: application/json
 ### 🔧 List available Slack triggers
 ### ----------------------------------------------------
 GET {{base_url}}/triggers
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_message (fires for any message in any channel the app can see; no per-channel filter yet)
@@ -247,6 +272,7 @@ GET {{base_url}}/triggers
 ### here in the first place.
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/slack/new_message/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -274,6 +300,7 @@ Content-Type: application/json
 ### 🔧 Unsubscribe — delete the trigger instance created above
 ### ----------------------------------------------------
 DELETE {{base_url}}/triggers/{{slack_new_message_ti}}
+Authorization: Bearer {{access_token}}
 
 # ============================================================================
 # ADMIN — read-only inspection, filter by app in the response yourself (no per-app query param)
@@ -281,9 +308,12 @@ DELETE {{base_url}}/triggers/{{slack_new_message_ti}}
 
 ### 🔧 Admin — users
 GET {{base_url}}/admin/users
+Authorization: Bearer {{admin_access_token}}
 
 ### 🔧 Admin — trigger instances
 GET {{base_url}}/admin/triggers
+Authorization: Bearer {{admin_access_token}}
 
 ### 🔧 Admin — action/trigger call log
 GET {{base_url}}/admin/logs?limit=20
+Authorization: Bearer {{admin_access_token}}

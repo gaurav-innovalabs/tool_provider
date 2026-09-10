@@ -9,6 +9,11 @@
 
 @base_url = http://localhost:3005
 
+### Paste your real values from .env here (ACCESS_TOKEN / ADMIN_ACCESS_TOKEN) — every gated route now
+### requires a real 'Authorization: Bearer <token>' header, no ?token= query-param fallback anymore.
+@access_token = REPLACE_ME_ACCESS_TOKEN
+@admin_access_token = REPLACE_ME_ADMIN_ACCESS_TOKEN
+
 # ============================================================================
 # 🔍 How to check an action's input/output schema (or a trigger's event payload schema) via the API
 # ============================================================================
@@ -22,11 +27,13 @@
 # 2) Per-tool schema route — GET /actions/{tool_slug} returns exactly this action's real input/output
 #    schema, e.g. list_recent_emails:
 GET {{base_url}}/actions/GMAIL_LIST_RECENT_EMAILS
+Authorization: Bearer {{access_token}}
 
 ### (or fetch the whole spec and jq into the shared execute/list-tool paths, e.g.
 ### `jq '.paths."/actions/execute/{tool_slug}".post.responses."200"' openapi.json` — but GET
 ### /actions/{tool_slug} above is the direct way to check ONE action's shape, no digging required)
 GET {{base_url}}/openapi.json
+Authorization: Bearer {{access_token}}
 #
 # 3) Triggers are simpler — GET /triggers already returns each trigger's `payload` JSON Schema directly,
 #    no digging into a bigger spec required (`payload` is `null` for a trigger that hasn't declared one —
@@ -36,6 +43,7 @@ GET {{base_url}}/openapi.json
 ### 🔧 Create a user (skip if you already have one — see root tool_provider.http)
 ### ----------------------------------------------------
 POST {{base_url}}/users
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -49,6 +57,7 @@ Content-Type: application/json
 ### 🔧 Connect Gmail (oauth2) — copy the returned connect_url and open it in a browser to finish OAuth
 ### ----------------------------------------------------
 POST {{base_url}}/connections
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -63,6 +72,7 @@ Content-Type: application/json
 ### 🔧 Check the connection's status — should be "active" once OAuth completes
 ### ----------------------------------------------------
 GET {{base_url}}/connections/{{gmail_connection_id}}
+Authorization: Bearer {{access_token}}
 
 # ============================================================================
 # ACTIONS (8)
@@ -72,6 +82,7 @@ GET {{base_url}}/connections/{{gmail_connection_id}}
 ### 🔧 send_email — send a plain-text email
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_SEND_EMAIL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -87,6 +98,7 @@ Content-Type: application/json
 ### 🔧 list_recent_emails — list recent mail, optionally filtered by a Gmail search query
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_LIST_RECENT_EMAILS
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -98,6 +110,7 @@ Content-Type: application/json
 ### 🔧 list_labels — list all labels (system + user)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_LIST_LABELS
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -109,6 +122,7 @@ Content-Type: application/json
 ### 🔧 create_label — create a user label
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_CREATE_LABEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -123,6 +137,7 @@ Content-Type: application/json
 ### 🔧 get_label — get one label's details, including message counts
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_GET_LABEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -134,6 +149,7 @@ Content-Type: application/json
 ### 🔧 update_label — rename a user label (system labels will be rejected by Gmail)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_UPDATE_LABEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -145,6 +161,7 @@ Content-Type: application/json
 ### 🔧 delete_label — delete a user label (system labels cannot be deleted)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_DELETE_LABEL
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -158,6 +175,7 @@ Content-Type: application/json
 ### comment for why send-draft/list-drafts/delete-draft weren't added.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_CREATE_DRAFT
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -174,11 +192,13 @@ Content-Type: application/json
 ### 🔧 List available Gmail triggers (filter this app's rows out of the full /triggers response)
 ### ----------------------------------------------------
 GET {{base_url}}/triggers
+Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_email (fires when a new email arrives)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_email/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -193,6 +213,7 @@ Content-Type: application/json
 ### 🔧 Subscribe — new_labeled_email (fires when a label is applied to a message; ALL labels, no per-instance filter yet)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_labeled_email/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -206,6 +227,7 @@ Content-Type: application/json
 ### 🔧 Subscribe — new_sent_email (fires when an email is sent; watches messageAdded + filters the SENT label)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_sent_email/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -219,6 +241,7 @@ Content-Type: application/json
 ### 🔧 Subscribe — new_starred_email (fires when an email is starred; watches labelAdded + filters STARRED)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_starred_email/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -232,6 +255,7 @@ Content-Type: application/json
 ### 🔧 Subscribe — new_draft (fires when a draft is created; watches messageAdded + filters the DRAFT label)
 ### ----------------------------------------------------
 POST {{base_url}}/triggers/gmail/new_draft/subscribe
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
@@ -249,6 +273,7 @@ Content-Type: application/json
 ### 🔧 Unsubscribe — delete any of the trigger instances created above
 ### ----------------------------------------------------
 DELETE {{base_url}}/triggers/{{gmail_new_email_ti}}
+Authorization: Bearer {{access_token}}
 
 # ============================================================================
 # ADMIN — read-only inspection, filter by app in the response yourself (no per-app query param)
@@ -256,9 +281,12 @@ DELETE {{base_url}}/triggers/{{gmail_new_email_ti}}
 
 ### 🔧 Admin — users
 GET {{base_url}}/admin/users
+Authorization: Bearer {{admin_access_token}}
 
 ### 🔧 Admin — trigger instances
 GET {{base_url}}/admin/triggers
+Authorization: Bearer {{admin_access_token}}
 
 ### 🔧 Admin — action/trigger call log
 GET {{base_url}}/admin/logs?limit=20
+Authorization: Bearer {{admin_access_token}}
