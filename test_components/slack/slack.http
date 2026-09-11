@@ -430,7 +430,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}", "thread_ts": "1234567890.123456" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -451,7 +451,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -465,7 +465,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -483,7 +483,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -497,7 +497,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -511,7 +511,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -527,7 +527,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
@@ -543,7 +543,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{slack_connection_id}}",
-  "webhook_url": "https://webhook.site/your-unique-url-here",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "config": { "channel_id": "{{slack_channel}}" },
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
@@ -593,6 +593,15 @@ Authorization: Bearer {{admin_access_token}}
 ### not this file's hand-maintained comment.
 GET {{base_url}}/triggers
 Authorization: Bearer {{access_token}}
+
+
+### ----------------------------------------------------
+### 🔧 Check MY trigger subscriptions — every Gmail instance this user has (see test_components/slack/
+### slack.http for the same check on Slack instances).
+### ----------------------------------------------------
+GET {{base_url}}/triggers/instances?user_id={{user_id}}&app=slack
+Authorization: Bearer {{access_token}}
+
 #
 # 2) READ what's already fired — GET /triggers/logs (used throughout this file per-instance via
 #    GET /triggers/instances/:id/logs) also has a NOT-scoped-to-one-instance form: every log row across

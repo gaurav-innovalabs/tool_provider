@@ -529,20 +529,27 @@ export const openApiSpec = {
       },
       patch: {
         tags: ["triggers"],
-        summary: "Update a trigger instance's extra_metadata",
-        description: "Metadata-only update — the client's own notes/tags space, editable after subscribe time (unlike Connection.extra_metadata, which is write-once). Everything else about the instance (webhook_url, poll_interval_ms, ...) is immutable post-subscribe: delete + re-subscribe is the only way to change those.",
+        summary: "Update a trigger instance's webhook_url, poll_interval_ms, and/or extra_metadata",
+        description: "In-place update for delivery-shaped fields — any subset of webhook_url/poll_interval_ms/extra_metadata, at least one required. `config` is NOT patchable here (it's per-trigger-shaped and validated at subscribe time) — re-scoping what an instance matches is still delete + re-subscribe.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" }, description: "trigger_instance_id" }],
         requestBody: {
           required: true,
           content: {
             "application/json": {
-              schema: { type: "object", properties: { extra_metadata: { type: "object", additionalProperties: true } }, required: ["extra_metadata"] },
+              schema: {
+                type: "object",
+                properties: {
+                  webhook_url: { type: "string", format: "uri" },
+                  poll_interval_ms: { type: "integer", minimum: 60000, description: "Poll-mode instances only; ignored (has no effect) for webhook-mode triggers like Slack." },
+                  extra_metadata: { type: "object", additionalProperties: true },
+                },
+              },
             },
           },
         },
         responses: {
           "200": { description: "Updated." },
-          "400": { description: "Invalid body, or extra_metadata over the size cap." },
+          "400": { description: "Invalid body, no fields provided, or extra_metadata over the size cap." },
           "404": { description: "Unknown trigger instance." },
         },
       },

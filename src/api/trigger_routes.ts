@@ -47,9 +47,20 @@ const subscribeBody = z.object({
   config: z.unknown().optional(),
 });
 
-const updateMetadataBody = z.object({
-  extra_metadata: extraMetadataSchema.unwrap(), // required on PATCH — omitting the body makes no sense for a metadata-only update route
-});
+// PATCH /triggers/:id body — every field optional, at least one required. `config` is deliberately NOT
+// here: it's per-trigger-shaped (validated against that trigger's own TriggerDefinition.config schema at
+// subscribe time) and changing what an instance is scoped to is a bigger decision than "point deliveries
+// somewhere else" — still delete + re-subscribe for that. webhook_url/poll_interval_ms/extra_metadata carry
+// no such per-trigger shape, so they're safe to patch in place without re-validating against the trigger.
+const updateTriggerBody = z
+  .object({
+    webhook_url: z.string().url().optional(),
+    poll_interval_ms: z.number().int().min(MIN_POLL_INTERVAL_MS).optional(),
+    extra_metadata: extraMetadataSchema,
+  })
+  .refine((body) => body.webhook_url !== undefined || body.poll_interval_ms !== undefined || body.extra_metadata !== undefined, {
+    message: "At least one of webhook_url, poll_interval_ms, extra_metadata must be provided",
+  });
 
 const resendBody = z.object({
   // No session-bound identity on the REST surface (unlike MCP's per-session userId) — same ownership-check
@@ -340,19 +351,28 @@ export const triggerRoutes = {
       return Response.json({ deleted: true });
     },
 
-    // Metadata-only update — the client's own notes/tags space, editable after subscribe time (unlike
-    // Connection.extra_metadata, which is write-once at POST /connections). Everything else about a
-    // TriggerInstance (webhook_url, poll_interval_ms, ...) is immutable post-subscribe by design: delete +
-    // re-subscribe is the only way to change those, same as Phase 3's documented trigger-pause gap.
+    // Flexible in-place update — webhook_url/poll_interval_ms/extra_metadata, any subset, all optional.
+    // `config` is NOT patchable here — see updateTriggerBody's comment above; re-scoping what an instance
+    // matches is still delete + re-subscribe. poll_interval_ms changes take effect on the trigger's next
+    // scheduled poll (src/core/scheduler.ts reads it fresh off the instance each cycle, not cached).
     PATCH: async (req: Request & { params: { id: string } }) => {
       try {
         const instance = await triggerInstanceStore.get(req.params.id);
         if (!instance) {
           return Response.json({ error: `Unknown trigger instance: ${req.params.id}` }, { status: 404 });
         }
-        const body = updateMetadataBody.parse(await req.json());
-        await triggerInstanceStore.update(req.params.id, { extra_metadata: body.extra_metadata, updated_at: new Date().toISOString() });
-        return Response.json({ trigger_instance_id: req.params.id, extra_metadata: body.extra_metadata });
+        const body = updateTriggerBody.parse(await req.json());
+        const patch: Partial<typeof instance> = { updated_at: new Date().toISOString() };
+        if (body.webhook_url !== undefined) patch.webhook_url = body.webhook_url;
+        if (body.poll_interval_ms !== undefined) patch.poll_interval_ms = body.poll_interval_ms;
+        if (body.extra_metadata !== undefined) patch.extra_metadata = body.extra_metadata;
+        await triggerInstanceStore.update(req.params.id, patch);
+        return Response.json({
+          trigger_instance_id: req.params.id,
+          webhook_url: body.webhook_url ?? instance.webhook_url,
+          poll_interval_ms: body.poll_interval_ms ?? instance.poll_interval_ms,
+          extra_metadata: body.extra_metadata ?? instance.extra_metadata,
+        });
       } catch (err) {
         return errorResponse(err);
       }
