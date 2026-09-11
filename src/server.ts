@@ -12,7 +12,9 @@
 // per-user MCP token — see src/mcp/httpServer.ts), and docsAssetRoutes (just the generic swagger-ui-dist
 // static bundle, not app-specific). docsPageRoutes (/docs) is gated too but validates the token itself
 // instead of using withAccessToken, since a plain browser navigation can't set an Authorization header —
-// see src/api/docs_routes.ts for the login-page flow that works around that.
+// see src/api/docs_routes.ts for the login-page flow that works around that. oauthRoutes (/oauth/*,
+// /.well-known/oauth-*) are un-gated for the same reason as mcp/login — a client hits these BEFORE it has
+// any credential; the /oauth/authorize form is the auth check (src/api/oauth_routes.ts).
 
 import { adminRoutes } from "./api/admin_routes";
 import { userRoutes } from "./api/user_routes";
@@ -22,6 +24,7 @@ import { triggerRoutes } from "./api/trigger_routes";
 import { webhookRoutes } from "./api/webhook_routes";
 import { docsPageRoutes, openApiRoutes, docsAssetRoutes } from "./api/docs_routes";
 import { mcpRoutes } from "./api/mcp_routes";
+import { oauthRoutes } from "./api/oauth_routes";
 import { withAccessToken, withAdminAccessToken } from "./lib/apiAuth";
 import { config } from "./config";
 
@@ -40,6 +43,7 @@ export function createServer() {
       ...openApiRoutes,
       ...docsAssetRoutes,
       ...mcpRoutes,
+      ...oauthRoutes,
     },
     development: {
       hmr: true,

@@ -165,6 +165,49 @@ export function mcpLoginFormPage(opts: { errorMessage?: string; userId?: string;
   );
 }
 
+// Same form as mcpLoginFormPage above, but posts to /oauth/authorize instead of /mcp/login and carries
+// the requesting MCP client's OAuth params through as hidden fields — this is the page a spec-compliant
+// remote-MCP client (Claude Code, Claude Desktop) bounces the user's browser to mid-flow (see
+// src/api/oauth_routes.ts). Submitting it does the exact same access_key/user_id check as /mcp/login;
+// the only difference is what happens after (an authorization code + redirect back to the client, not a
+// token shown directly on the page).
+export function oauthAuthorizePage(opts: {
+  errorMessage?: string;
+  userId?: string;
+  client_id: string;
+  redirect_uri: string;
+  state: string;
+  code_challenge: string;
+  code_challenge_method: string;
+}): Response {
+  const errorBanner = opts.errorMessage ? `<div class="error-banner">${escapeHtml(opts.errorMessage)}</div>` : "";
+  const hidden = (name: string, value: string) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
+  return renderPage(
+    "Connect MCP",
+    `<div class="badge">MCP</div>
+     <h1>Sign in to tool-provider</h1>
+     <p class="subtitle">An MCP client is requesting access. Enter the access key (and optionally an existing user ID) to continue.</p>
+     ${errorBanner}
+     <form method="POST" action="/oauth/authorize">
+       ${hidden("client_id", opts.client_id)}
+       ${hidden("redirect_uri", opts.redirect_uri)}
+       ${hidden("state", opts.state)}
+       ${hidden("code_challenge", opts.code_challenge)}
+       ${hidden("code_challenge_method", opts.code_challenge_method)}
+       <div class="field">
+         <label for="access_key">Access key</label>
+         <input id="access_key" name="access_key" type="password" required autocomplete="off">
+       </div>
+       <div class="field">
+         <label for="user_id">Existing user ID (optional)</label>
+         <input id="user_id" name="user_id" type="text" placeholder="usr_... — leave blank to create a new one" autocomplete="off" value="${escapeHtml(opts.userId ?? "")}">
+       </div>
+       <button type="submit">Continue</button>
+     </form>
+     <div class="footer">Internal use only. Approving this hands the MCP client a session bound to the user ID above — no app config, no static token.</div>`,
+  );
+}
+
 // `token` is shown once, in plaintext, on purpose — it's the caller's only chance to copy it (we never
 // display it again; resolveMcpLoginToken only ever gets checked, not read back for display elsewhere).
 // No copy-to-clipboard JS button — deliberately zero JS across every page in this file (see file header).

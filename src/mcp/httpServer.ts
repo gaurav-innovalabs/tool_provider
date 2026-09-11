@@ -13,6 +13,19 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildMcpServer } from "./server";
 import { resolveMcpLoginToken } from "../lib/mcpTokens";
+import { config } from "../config";
+
+// RFC 9728: points a spec-compliant client (Claude Code, Claude Desktop) at
+// /.well-known/oauth-protected-resource (src/api/oauth_routes.ts) so it can register a client, run the
+// PKCE authorization-code flow through /oauth/authorize's login form, and get a bearer token back —
+// entirely on its own, no static header/env var ever hand-typed into the client's config. A client that
+// doesn't understand this header just sees a plain 401, same as before.
+function unauthenticated(body: Record<string, unknown>): Response {
+  return Response.json(body, {
+    status: 401,
+    headers: { "WWW-Authenticate": `Bearer resource_metadata="${config.BASE_URL}/.well-known/oauth-protected-resource"` },
+  });
+}
 
 interface McpHttpSession {
   transport: WebStandardStreamableHTTPServerTransport;
@@ -50,11 +63,11 @@ export async function handleMcpHttpRequest(req: Request): Promise<Response> {
   // login token before creating anything.
   const token = extractBearerToken(req);
   if (!token) {
-    return Response.json({ error: "Missing bearer token — get one at /mcp/login" }, { status: 401 });
+    return unauthenticated({ error: "Missing bearer token — get one at /mcp/login, or let your MCP client discover /oauth/authorize automatically." });
   }
   const payload = await resolveMcpLoginToken(token);
   if (!payload) {
-    return Response.json({ error: "Invalid or unknown MCP token — get a new one at /mcp/login" }, { status: 401 });
+    return unauthenticated({ error: "Invalid or unknown MCP token — get a new one at /mcp/login, or reconnect via your MCP client's OAuth flow." });
   }
 
   const server = buildMcpServer(payload.user_id, payload.apps);
