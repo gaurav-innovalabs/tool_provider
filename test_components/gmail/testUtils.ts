@@ -92,15 +92,16 @@ export async function runAction<Input, Output>(
 // Runs one poll() call, validating each returned event against the trigger's own declared `payload`
 // schema when it has one (some triggers haven't tightened payload yet — see types.ts's comment on why
 // that's optional).
-export async function runPoll<Cursor, Event>(
-  trigger: TriggerDefinition<Cursor, Event>,
+export async function runPoll<Cursor, Event, Config = unknown>(
+  trigger: TriggerDefinition<Cursor, Event, Config>,
   connection: Connection,
   cursor: Cursor | null,
+  config: Config | null = null,
 ): Promise<{ events: Event[]; nextCursor: Cursor }> {
   if (!trigger.poll) {
     throw new Error(`runPoll: trigger "${trigger.key}" has no poll() (mode: ${trigger.mode})`);
   }
-  const result = await trigger.poll(connection, cursor);
+  const result = await trigger.poll(connection, cursor, config);
   if (trigger.payload) {
     for (const event of result.events) trigger.payload.parse(event);
   }

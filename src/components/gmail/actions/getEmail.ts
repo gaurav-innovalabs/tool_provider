@@ -8,6 +8,7 @@ const input = z.object({
 
 const output = z.object({
   id: z.string(),
+  thread_id: z.string(),
   from: z.string(),
   to: z.string(),
   subject: z.string(),
@@ -28,6 +29,7 @@ interface GmailMessagePart {
 
 interface GmailMessageGetResponse {
   id: string;
+  threadId: string;
   internalDate: string; // epoch millis, as a string
   labelIds?: string[];
   payload: { headers: { name: string; value: string }[] } & GmailMessagePart;
@@ -87,6 +89,7 @@ export const getEmail: ActionDefinition<Input, Output> = {
 
     return {
       id: msg.id,
+      thread_id: msg.threadId,
       from: header(msg, "From"),
       to: header(msg, "To"),
       subject: header(msg, "Subject"),

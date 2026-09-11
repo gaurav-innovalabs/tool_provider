@@ -16,6 +16,7 @@ describe("listRecentEmails", () => {
       {
         body: {
           id: "m1",
+          threadId: "t1",
           snippet: "hi there",
           internalDate: "1700000000000",
           payload: { headers: [{ name: "From", value: "a@b.com" }, { name: "Subject", value: "Hey" }] },
@@ -28,6 +29,7 @@ describe("listRecentEmails", () => {
     expect(result).toEqual([
       {
         id: "m1",
+        thread_id: "t1",
         from: "a@b.com",
         subject: "Hey",
         snippet: "hi there",
@@ -43,6 +45,14 @@ describe("listRecentEmails", () => {
 
     expect(calls[0]!.url).toContain("maxResults=10");
     expect(calls[0]!.url).toContain("q=is%3Aunread");
+  });
+
+  test("always scopes the list to labelIds=INBOX — messages.list with no labelIds returns the whole mailbox (drafts/sent included), which is not what \"recent emails\" means here", async () => {
+    const { calls } = mockGmailFetch([{ body: { messages: [] } }]);
+
+    await runAction(listRecentEmails, makeGmailConnection(), {});
+
+    expect(calls[0]!.url).toContain("labelIds=INBOX");
   });
 
   test("returns an empty array when there are no messages (no per-message fetches made)", async () => {

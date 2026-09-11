@@ -125,6 +125,19 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
+### 🔧 list_spam_emails — list mail Gmail has classified as spam (list_recent_emails can never see these —
+### Gmail excludes SPAM/TRASH from every plain search by default)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_LIST_SPAM_EMAILS
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "max_results": 10 }
+}
+
+### ----------------------------------------------------
 ### 🔧 list_labels — list all labels (system + user)
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_LIST_LABELS
@@ -188,9 +201,7 @@ Content-Type: application/json
 }
 
 ### ----------------------------------------------------
-### 🔧 create_draft — create ("draft") an unsent email. This IS the draft-email action — Gmail/Pipedream
-### only has one draft-related action (create), no separate "draft_email" key; see createDraft.ts's header
-### comment for why send-draft/list-drafts/delete-draft weren't added.
+### 🔧 create_draft — create ("draft") an unsent email.
 ### ----------------------------------------------------
 POST {{base_url}}/actions/execute/GMAIL_CREATE_DRAFT
 Authorization: Bearer {{access_token}}
@@ -199,6 +210,120 @@ Content-Type: application/json
 {
   "connection_id": "{{gmail_connection_id}}",
   "input": { "to": "GauravRewaliya@yahoo.com", "subject": "Draft from gmail.http", "body": "Not sent yet." }
+}
+
+### Copy the returned draft_id here to test get/update/send/delete below
+@gmail_draft_id = REPLACE_ME
+
+### ----------------------------------------------------
+### 🔧 list_drafts — list unsent drafts
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_LIST_DRAFTS
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "max_results": 10 }
+}
+
+### ----------------------------------------------------
+### 🔧 get_draft — get one draft's full content
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_GET_DRAFT
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "draft_id": "{{gmail_draft_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 update_draft — replace an existing draft's content (Gmail's drafts.update — this IS the
+### edit-a-draft action; only found by checking the real Gmail REST API, not by copying Pipedream/MCP
+### tool lists, since none of them happen to expose it)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_UPDATE_DRAFT
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "draft_id": "{{gmail_draft_id}}", "to": "GauravRewaliya@yahoo.com", "subject": "Edited draft from gmail.http", "body": "Now edited." }
+}
+
+### ----------------------------------------------------
+### 🔧 send_draft — send an existing draft as-is (consumes it — it won't show in list_drafts afterward)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_SEND_DRAFT
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "draft_id": "{{gmail_draft_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 delete_draft — permanently delete an unsent draft (no undo)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_DELETE_DRAFT
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "draft_id": "{{gmail_draft_id}}" }
+}
+
+### ----------------------------------------------------
+### 🔧 get_thread — get every message in a conversation by thread id
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_GET_THREAD
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "thread_id": "REPLACE_ME" }
+}
+
+### ----------------------------------------------------
+### 🔧 modify_message_labels — add/remove labels on a message (archive/star/mark-read/apply-label all go
+### through this one call — see the action's own header comment for recipes)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_MODIFY_MESSAGE_LABELS
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "message_id": "REPLACE_ME", "add_label_ids": ["STARRED"], "remove_label_ids": [] }
+}
+
+### ----------------------------------------------------
+### 🔧 trash_message — move a message to Trash (reversible — see untrash_message)
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_TRASH_MESSAGE
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "message_id": "REPLACE_ME" }
+}
+
+### ----------------------------------------------------
+### 🔧 untrash_message — restore a message out of Trash
+### ----------------------------------------------------
+POST {{base_url}}/actions/execute/GMAIL_UNTRASH_MESSAGE
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "input": { "message_id": "REPLACE_ME" }
 }
 
 # ============================================================================
@@ -213,20 +338,39 @@ GET {{base_url}}/triggers
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 Subscribe — new_email (fires when a new email arrives)
+### 🔧 Subscribe — new_email_received (fires when a new email is received into the inbox — requires INBOX,
+### renamed from new_email to match Pipedream's own real source name, gmail-new-email-received)
 ### ----------------------------------------------------
-POST {{base_url}}/triggers/gmail/new_email/subscribe
+POST {{base_url}}/triggers/gmail/new_email_received/subscribe
 Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 ### Copy the returned trigger_instance_id to unsubscribe below
-@gmail_new_email_ti = ti_5598d8ca-a06b-4f6b-8ce7-50dbc14a9982
+@gmail_new_email_received_ti = ti_f5fd4c7e-e979-4a13-8469-746ec729337f
+
+### ----------------------------------------------------
+### 🔧 Subscribe — new_email_matching_search (fires when a NEW email matching config.query arrives —
+### Gmail's own search syntax. Built on messages.list + a timestamp cursor, not historyId, since Gmail's
+### history API has no search-query param at all — see newEmailMatchingSearch.ts's header comment)
+### ----------------------------------------------------
+POST {{base_url}}/triggers/gmail/new_email_matching_search/subscribe
+Authorization: Bearer {{access_token}}
+Content-Type: application/json
+
+{
+  "connection_id": "{{gmail_connection_id}}",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
+  "config": { "query": "from:boss@company.com" },
+  "extra_metadata": { "notes": "for the #support-eu channel" }
+}
+
+@gmail_new_email_matching_search_ti = ti_REPLACE_ME
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_sent_email (fires when an email is sent; watches messageAdded + filters the SENT label)
@@ -237,7 +381,7 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
@@ -252,12 +396,12 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 ### 
-@gmail_new_starred_email_ti = ti_e4e38bc1-1492-4ae5-8714-e88fcdd388f5
+@gmail_new_starred_email_ti = ti_6ed11300-c93e-4ddc-8450-8219cf8f18e4
 
 ### ----------------------------------------------------
 ### 🔧 Subscribe — new_draft (fires when a draft is created; watches messageAdded + filters the DRAFT label)
@@ -268,23 +412,18 @@ Content-Type: application/json
 
 {
   "connection_id": "{{gmail_connection_id}}",
-  "webhook_url": "https://webhook.site/3772288b374e7045c59364c8dcad4be12dc1338cf0a80d6dee42ac2adaa392d1",
+  "webhook_url": "https://webhook.site/49a5ef62-aded-4a23-860f-254894405801",
   "extra_metadata": { "notes": "for the #support-eu channel" }
 }
 
 ### 
 
-@gmail_new_draft_ti = ti_d0acf602-78a6-44fa-bafb-7b643239ce26
-
-### Note: new_email_matching_search is NOT implemented — TriggerDefinition.config (types.ts) is the generic
-### per-instance input-props mechanism that would carry its search query (Slack's channel/thread_ts-scoped
-### triggers already use it — see test_components/slack/slack.http), but no Gmail trigger declares a
-### `config` schema yet, so subscribing to any Gmail trigger here always fires unscoped (every message).
+@gmail_new_draft_ti = ti_297efbc4-a508-4e87-9357-0744073b2d3d
 
 ### ----------------------------------------------------
 ### 🔧 Unsubscribe — delete any of the trigger instances created above
 ### ----------------------------------------------------
-DELETE {{base_url}}/triggers/{{gmail_new_email_ti}}
+DELETE {{base_url}}/triggers/{{gmail_new_email_received_ti}}
 Authorization: Bearer {{access_token}}
 
 # ============================================================================
@@ -311,8 +450,8 @@ GET {{base_url}}/triggers/instances?user_id={{user_id}}&app=gmail
 Authorization: Bearer {{access_token}}
 
 ### ----------------------------------------------------
-### 🔧 Check MY most recent trigger fires — across EVERY Gmail trigger I've subscribed to (new_email,
-### new_draft, new_starred_email, new_sent_email all in one call), not just one
+### 🔧 Check MY most recent trigger fires — across EVERY Gmail trigger I've subscribed to (new_email_received,
+### new_email_matching_search, new_draft, new_starred_email, new_sent_email all in one call), not just one
 ### trigger_instance_id. Each row carries its own trigger_instance_id/trigger_key. Same with_payload=true/
 ### limit=20 defaults as the per-instance version below.
 ### ----------------------------------------------------

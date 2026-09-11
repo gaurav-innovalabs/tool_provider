@@ -104,7 +104,7 @@ export const newStarredEmail: TriggerDefinition<GmailHistoryCursor, NewStarredEm
     ];
 
     // A single message's fetch failing here must NOT throw and abort the whole poll() call — see
-    // newEmail.ts's fuller comment on the same pattern: it would leave nextCursor unreturned, permanently
+    // newEmailReceived.ts's fuller comment on the same pattern: it would leave nextCursor unreturned, permanently
     // stuck re-fetching the same failing message on every future poll. Skip and log instead.
     const events = (
       await Promise.all(

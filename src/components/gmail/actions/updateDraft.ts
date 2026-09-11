@@ -1,15 +1,14 @@
-// Same shape as sendEmail.ts, but POSTs to /drafts instead of /messages/send — Gmail wraps the same RFC
-// 2822 message in a `{ message: { raw } }` envelope for drafts. See listDrafts.ts/getDraft.ts/
-// updateDraft.ts/deleteDraft.ts/sendDraft.ts for the rest of drafts CRUD.
-//
-// Simplified vs. Pipedream's version, same "lite" pattern as sendEmail.ts: no attachments, no
-// reply-threading (inReplyToMessageId), no from-name/from-email aliasing. Add if actually needed.
+// Gmail's drafts.update (PUT /drafts/{id}) fully replaces the draft's message content, same as
+// createDraft.ts's drafts.create — it's a real, documented endpoint (contrary to the earlier assumption
+// that no Gmail tooling supports editing an existing draft; Pipedream/most MCP servers just don't happen to
+// expose it). Same "lite" shape as createDraft.ts: no attachments, no from-name/from-email aliasing.
 
 import { z } from "zod";
 import type { ActionDefinition } from "../../../types";
 import { describeGoogleApiError } from "../../../lib/googleErrors";
 
 const input = z.object({
+  draft_id: z.string().min(1).describe("Gmail draft id, e.g. the `draft_id` field from list_drafts or create_draft"),
   to: z.string().email(),
   subject: z.string().min(1),
   body: z.string(),
@@ -27,14 +26,14 @@ function toBase64Url(str: string): string {
   return Buffer.from(str).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-interface GmailDraftCreateResponse {
+interface GmailDraftUpdateResponse {
   id: string;
   message: { id: string };
 }
 
-export const createDraft: ActionDefinition<Input, Output> = {
-  key: "create_draft",
-  description: "Create an unsent draft in the connected Gmail account.",
+export const updateDraft: ActionDefinition<Input, Output> = {
+  key: "update_draft",
+  description: "Replace the content (to/subject/body) of an existing unsent Gmail draft.",
   input,
   output,
   async run(connection, params) {
@@ -48,8 +47,8 @@ export const createDraft: ActionDefinition<Input, Output> = {
       ),
     );
 
-    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
-      method: "POST",
+    const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/drafts/${params.draft_id}`, {
+      method: "PUT",
       headers: {
         Authorization: `Bearer ${connection.secrets.access_token}`,
         "Content-Type": "application/json",
@@ -58,10 +57,10 @@ export const createDraft: ActionDefinition<Input, Output> = {
     });
 
     if (!res.ok) {
-      throw new Error(`Gmail create_draft failed (${res.status}): ${await describeGoogleApiError(res)}`);
+      throw new Error(`Gmail update_draft failed (${res.status}): ${await describeGoogleApiError(res)}`);
     }
 
-    const data = (await res.json()) as GmailDraftCreateResponse;
+    const data = (await res.json()) as GmailDraftUpdateResponse;
     return { draft_id: data.id, message_id: data.message.id };
   },
 };

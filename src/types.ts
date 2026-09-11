@@ -124,8 +124,13 @@ export interface TriggerDefinition<Cursor = unknown, Event = unknown, Config = u
   // a strong signal — that's this project's default too (see each trigger's own file), overridable per
   // TriggerInstance at subscribe time (src/api/trigger_routes.ts), same as both platforms allow.
   defaultPollIntervalMs?: number;
-  // Only relevant when mode === "poll". Returns new events + the next cursor to persist.
-  poll?: (connection: Connection, cursor: Cursor | null) => Promise<{ events: Event[]; nextCursor: Cursor }>;
+  // Only relevant when mode === "poll". Returns new events + the next cursor to persist. `config` is the
+  // same per-instance INPUT PROPS concept `matchesConfig` uses for webhook mode (null when this trigger
+  // declares no `config` schema, or the subscriber didn't set one) — e.g. new_email_matching_search's own
+  // search query. Unlike webhook mode (one dispatcher, N candidate instances, matchesConfig picks which
+  // ones a single inbound event matches), poll mode has exactly one instance driving its own poll() call,
+  // so there's no separate "matches" step: poll() just uses config directly to shape its own request.
+  poll?: (connection: Connection, cursor: Cursor | null, config: Config | null) => Promise<{ events: Event[]; nextCursor: Cursor }>;
   // Only relevant when mode === "webhook". Parses a raw inbound payload into normalized events.
   handleWebhook?: (connection: Connection, rawPayload: unknown) => Promise<Event[]>;
   // Declared shape of each `data` object delivered to a subscriber's webhook_url (src/core/scheduler.ts's

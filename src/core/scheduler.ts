@@ -221,7 +221,7 @@ export async function runTriggerPollCycle(): Promise<void> {
         // poll failure.
         connection = await ensureFreshConnection(app, connection);
 
-        const { events, nextCursor } = await trigger.poll(connection, instance.cursor);
+        const { events, nextCursor } = await trigger.poll(connection, instance.cursor, instance.config ?? null);
         totalEvents += events.length;
 
         for (const event of events) {

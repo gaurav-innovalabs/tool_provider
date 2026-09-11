@@ -4,6 +4,13 @@
 //
 // Pub/Sub watch() push mode is explicitly OUT of scope (needs its own GCP topic + IAM + 7-day renewal
 // scheduler, per gmail-deep-dive.md recommendation #1) — this is the polling-only path.
+//
+// Renamed from new_email -> new_email_received (file newEmail.ts -> newEmailReceived.ts) to match
+// Pipedream's own real source name exactly (gmail-new-email-received) — verified by listing
+// PipedreamHQ/pipedream's actual components/gmail/sources/ directory, which also has a SEPARATE
+// gmail-new-email-matching-search source (see newEmailMatchingSearch.ts) built on a completely different
+// mechanism (messages.list + q + an after:<timestamp> cursor, not history.list — Gmail's history API has
+// no search-query param at all, so a query-scoped trigger can't be built on this file's mechanism).
 
 import { z } from "zod";
 import type { TriggerDefinition } from "../../../types";
@@ -14,7 +21,7 @@ export interface GmailHistoryCursor {
   historyId: string;
 }
 
-export interface NewEmailEvent {
+export interface NewEmailReceivedEvent {
   message_id: string;
   from: string;
   to: string;
@@ -26,7 +33,7 @@ export interface NewEmailEvent {
   received_at: string;
 }
 
-const newEmailPayload: z.ZodType<NewEmailEvent> = z.object({
+const newEmailReceivedPayload: z.ZodType<NewEmailReceivedEvent> = z.object({
   message_id: z.string(),
   from: z.string(),
   to: z.string(),
@@ -39,8 +46,16 @@ interface GmailProfileResponse {
   historyId: string;
 }
 
+// `history.list`'s own messagesAdded[].message ALREADY carries labelIds (and threadId) — confirmed against
+// a real live account, not assumed: a raw history.list call returned e.g.
+// { "messagesAdded": [{ "message": { "id": "...", "threadId": "...", "labelIds": ["DRAFT"] } }] } with NO
+// extra fetch. Pipedream's real polling-history.mjs filterHistory() filters on exactly this embedded field
+// too (`item.messagesAdded[0].message.labelIds`), never a separate messages.get just to check a label. An
+// earlier version of this file fetched full message metadata for EVERY messageAdded id first and only
+// filtered afterward — wasteful (fetching metadata for messages about to be thrown away) and NOT what the
+// verified reference implementation does.
 interface GmailHistoryListResponse {
-  history?: { messagesAdded?: { message: { id: string } }[] }[];
+  history?: { messagesAdded?: { message: { id: string; threadId?: string; labelIds?: string[] } }[] }[];
   historyId: string;
   error?: { code: number; message: string };
 }
@@ -59,22 +74,23 @@ function header(msg: GmailMessageGetResponse, name: string): string {
 async function seedCursor(authHeaders: Record<string, string>): Promise<GmailHistoryCursor> {
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: authHeaders });
   if (!res.ok) {
-    throw new Error(`Gmail new_email trigger: failed to seed historyId (${res.status}): ${await describeGoogleApiError(res)}`);
+    throw new Error(`Gmail new_email_received trigger: failed to seed historyId (${res.status}): ${await describeGoogleApiError(res)}`);
   }
   const profile = (await res.json()) as GmailProfileResponse;
   return { historyId: profile.historyId };
 }
 
-export const newEmail: TriggerDefinition<GmailHistoryCursor, NewEmailEvent> = {
-  key: "new_email",
-  description: "Fires when a new email arrives in the connected Gmail account.",
+export const newEmailReceived: TriggerDefinition<GmailHistoryCursor, NewEmailReceivedEvent> = {
+  key: "new_email_received",
+  description:
+    "Fires when a new email is received into the connected Gmail account's inbox (requires the INBOX label — creating/editing a draft, sending mail, and Gmail Chat messages are all excluded; mail a filter auto-archives on arrival is excluded too, same default Pipedream's own new-email-received source uses). Cursor-based (Gmail historyId, not a timer) — a delayed or restarted worker always resumes exactly where it left off with no gaps and no duplicates, it just delivers late, never wrong; see newEmailMatchingSearch.ts if you need to scope to a search query instead of the whole inbox.",
   mode: "poll",
   // 8 min, per spec. (For reference: Pipedream's real DEFAULT_POLLING_SOURCE_TIMER_INTERVAL is 15 min,
   // Composio's minimum is also 15 min — both verified from real source/docs during R&D. 8 min here is a
   // deliberate choice, not derived from either.) Overridable per-subscription (src/api/trigger_routes.ts),
   // not a fixed global setting — see src/core/scheduler.ts's header for why there's no global interval.
   defaultPollIntervalMs: config.apps.gmail.GMAIL_POLL_INTERVAL_MS, // env-configurable, default 8 min — see config.ts's comment
-  payload: newEmailPayload,
+  payload: newEmailReceivedPayload,
   async poll(connection, cursor) {
     if (!connection.secrets?.access_token) {
       throw new Error(`Connection ${connection.connection_id} has no access_token in secrets (not active yet?)`);
@@ -99,12 +115,21 @@ export const newEmail: TriggerDefinition<GmailHistoryCursor, NewEmailEvent> = {
         // historyId fell out of Gmail's retention window — per gmail-deep-dive.md, reseed rather than error.
         return { events: [], nextCursor: await seedCursor(authHeaders) };
       }
-      throw new Error(`Gmail new_email trigger failed (${res.status}): ${data.error?.message ?? res.statusText}`);
+      throw new Error(`Gmail new_email_received trigger failed (${res.status}): ${data.error?.message ?? res.statusText}`);
     }
 
-    const messageIds = (data.history ?? []).flatMap((h) => (h.messagesAdded ?? []).map((m) => m.message.id));
-    // Dedup — the same message can appear in more than one history record within one page.
-    const uniqueIds = [...new Set(messageIds)];
+    const addedMessages = (data.history ?? []).flatMap((h) => h.messagesAdded ?? []).map((m) => m.message);
+
+    // Require INBOX rather than excluding DRAFT/SENT (an earlier version of this filter did that, and it
+    // was a real bug: an exclude-list only blocks the labels you thought of — it still misfires on Gmail
+    // Chat messages (CHAT label), or any other non-arrival system label Google adds later. Same
+    // positive-allowlist shape as Pipedream's real gmail-new-email-received source (default `labels:
+    // ["INBOX"]`, PipedreamHQ/pipedream's components/gmail/sources/common/polling-history.mjs).
+    //
+// Filtered BEFORE fetching per-message metadata (labelIds already came from the history.list response
+    // above, see the interface comment) — a message that's going to be dropped never costs a messages.get
+    // call at all, unlike the earlier fetch-everything-then-filter version.
+    const uniqueIds = [...new Set(addedMessages.filter((m) => (m.labelIds ?? []).includes("INBOX")).map((m) => m.id))];
 
     // A single message's fetch failing here must NOT throw and abort the whole poll() call — if it did,
     // nextCursor below would never be returned, the cursor would stay stuck at this exact historyId
@@ -115,7 +140,7 @@ export const newEmail: TriggerDefinition<GmailHistoryCursor, NewEmailEvent> = {
     // advances, and the trigger keeps working.
     const events = (
       await Promise.all(
-        uniqueIds.map(async (id): Promise<NewEmailEvent | null> => {
+        uniqueIds.map(async (id): Promise<NewEmailReceivedEvent | null> => {
           const msgUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`);
           msgUrl.searchParams.set("format", "metadata");
           msgUrl.searchParams.append("metadataHeaders", "From");
@@ -123,7 +148,7 @@ export const newEmail: TriggerDefinition<GmailHistoryCursor, NewEmailEvent> = {
           msgUrl.searchParams.append("metadataHeaders", "Subject");
           const msgRes = await fetch(msgUrl, { headers: authHeaders });
           if (!msgRes.ok) {
-            console.warn(`[gmail new_email] skipping message ${id}: fetch failed (${msgRes.status}): ${await describeGoogleApiError(msgRes)}`);
+            console.warn(`[gmail new_email_received] skipping message ${id}: fetch failed (${msgRes.status}): ${await describeGoogleApiError(msgRes)}`);
             return null;
           }
           const msg = (await msgRes.json()) as GmailMessageGetResponse;
@@ -137,7 +162,7 @@ export const newEmail: TriggerDefinition<GmailHistoryCursor, NewEmailEvent> = {
           };
         }),
       )
-    ).filter((event): event is NewEmailEvent => event !== null);
+    ).filter((event): event is NewEmailReceivedEvent => event !== null);
 
     return { events, nextCursor: { historyId: data.historyId } };
   },
